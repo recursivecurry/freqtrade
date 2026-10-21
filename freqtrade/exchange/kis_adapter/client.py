@@ -5,6 +5,7 @@ import math
 import re
 import threading
 import time
+from http.client import HTTPException
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -114,6 +115,8 @@ class KisClient:
         if delay > 0:
             time.sleep(delay)
         self._last_request = time.monotonic()
+        if path == "/oauth2/tokenP":
+            self._last_token_attempt = self._last_request
         request = Request(  # noqa: S310 - hosts are fixed HTTPS URLs; redirects are disabled.
             HOSTS[self.environment] + path, data=body, headers=headers or {}, method=method
         )
@@ -130,7 +133,7 @@ class KisClient:
                 429: ccxt.RateLimitExceeded,
             }.get(status, ccxt.ExchangeNotAvailable if status >= 500 else ccxt.BadRequest)
             raise error(f"kis HTTP {status}") from None
-        except (OSError, URLError) as exc:
+        except (OSError, URLError, HTTPException) as exc:
             reason = exc.reason if isinstance(exc, URLError) else exc
             error = ccxt.RequestTimeout if isinstance(reason, TimeoutError) else ccxt.NetworkError
             raise error("kis transport failed") from None
@@ -144,9 +147,8 @@ class KisClient:
         now = time.monotonic()
         if self._token and now < self._expires_at:
             return self._token
-        if now - self._last_token_attempt < 60:
+        if now < self._last_token_attempt + 60:
             raise ccxt.RateLimitExceeded("kis token issuance cooldown; retry later")
-        self._last_token_attempt = now
         data, _ = self._http(
             "POST",
             "/oauth2/tokenP",

@@ -3,6 +3,7 @@ import io
 import json
 import socket
 import threading
+from http.client import BadStatusLine, IncompleteRead
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
@@ -151,6 +152,21 @@ def test_repeated_expiry_stops_after_one_read_replay(clock):
     assert len(transport.calls) == 5
 
 
+def test_token_cooldown_starts_at_actual_post_after_pacing(clock):
+    api, transport = make_client([TOKEN, {"rt_cd": "1", "msg_cd": "EGW00123"}])
+    api._last_request = clock.now
+    with pytest.raises(ccxt.RateLimitExceeded):
+        api.get(PATH, TR, {})
+    assert api._last_token_attempt == 1001.1
+    clock.now = 1060
+    with pytest.raises(ccxt.RateLimitExceeded):
+        api.get(PATH, TR, {})
+    assert len(transport.calls) == 2
+    clock.now = 1061.1
+    transport.replies.extend([TOKEN, OK])
+    assert api.get(PATH, TR, {}) == (OK, "")
+
+
 @pytest.mark.parametrize(
     "status,error",
     [
@@ -184,6 +200,8 @@ def test_http_errors_are_sanitized(status, error, clock):
         (URLError(TimeoutError("secret")), ccxt.RequestTimeout),
         (URLError("secret"), ccxt.NetworkError),
         (ConnectionResetError("secret"), ccxt.NetworkError),
+        (BadStatusLine("secret"), ccxt.NetworkError),
+        (IncompleteRead(b"secret", 100), ccxt.NetworkError),
     ],
 )
 def test_failures_never_become_empty_success(reply, error, clock):
