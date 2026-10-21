@@ -193,6 +193,18 @@ is accepted. Execution-level history remains unimplemented until an authoritativ
 source with stable identity and timestamp is established. It is not a phase-1 claim
 that aggregate data fully meets CCXT's personal-trade contract.
 
+The pinned official [private fill-notification example](https://github.com/koreainvestment/open-trading-api/blob/2077773a69a428daf63e148182511f068cc45de3/examples_llm/domestic_stock/ccnl_notice/ccnl_notice.py)
+does expose event quantity, price and time over WebSocket (`H0STCNI0` production,
+`H0STCNI9` paper), alongside order/cancellation acknowledgements. Only `CNTG_YN=2`
+identifies a fill notification. This is a possible separate execution source, but
+the sample does not establish a stable execution ID or replay of missed events.
+Combining order number, second-resolution time, quantity and price is not proof of
+uniqueness: identical fills can occur within the same second. Supporting complete
+personal trade history through this route requires a verified identity/deduplication
+and reconnect/backfill contract, plus expansion of the initial no-WebSocket scope.
+Until the user accepts the cumulative-only contract or that alternative is verified,
+the execution-history scope decision remains a phase-1 merge blocker.
+
 KRX session orders must use DAY semantics. Add DAY to Freqtrade's configuration,
 types and feature validation instead of claiming GTC support. At session close,
 query the broker to determine the final state; do not infer cancellation or erase
