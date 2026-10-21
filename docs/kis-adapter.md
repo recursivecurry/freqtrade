@@ -35,12 +35,13 @@ target account; a matching TR ID alone is not evidence of server compatibility.
 | `fetch_ticker` | `quotations/inquire-price` | `FHKST01010100` / same | `FID_COND_MRKT_DIV_CODE=J`, `FID_INPUT_ISCD`; `output` |
 | `fetch_order_book`, `fetch_l2_order_book` | `quotations/inquire-asking-price-exp-ccn` | `FHKST01010200` / same | KRX symbol; price and remaining-volume levels in `output1` |
 | intraday `fetch_ohlcv` | `quotations/inquire-time-dailychartprice` | `FHKST03010230` / unverified | business date, time cursor, `output2`; production example documents up to 120 records and up to one year of retained data |
-| daily `fetch_ohlcv` | `quotations/inquire-daily-itemchartprice` | verify before implementation | requested date range and adjustment flag; do not mix adjusted and unadjusted prices |
+| daily `fetch_ohlcv` | `quotations/inquire-daily-itemchartprice` | `FHKST03010100` / same | requested date range and adjustment flag; do not mix adjusted and unadjusted prices |
 | `fetch_balance` | `trading/inquire-balance` | `TTTC8434R` / `VTTC8434R` | `CANO`, `ACNT_PRDT_CD`, positions in `output1`, account summary in `output2` |
 | cash buying-power check | `trading/inquire-psbl-order` | `TTTC8908R` / `VTTC8908R` | `PDNO`, price/order type; use `nrcvb_buy_amt` and `nrcvb_buy_qty`, never `max_buy_*` credit-inclusive values |
 | `create_order` buy / sell | `trading/order-cash` | buy `TTTC0012U` / `VTTC0012U`; sell `TTTC0011U` / `VTTC0011U` | string quantity/price, `EXCG_ID_DVSN_CD=KRX`; acceptance is not a fill |
-| `fetch_order`, `fetch_orders`, `fetch_open_orders`, `fetch_my_trades` | `trading/inquire-daily-ccld` | within 3 months `TTTC0081R` / `VTTC0081R` | business-date range, account, symbol and order ID; inspect cumulative quantities and cancellation fields |
-| cancellation eligibility | `trading/inquire-psbl-rvsecncl` | verify before implementation | obtain eligible quantity and original order routing identifiers before cancellation |
+| `fetch_order`, `fetch_orders`, `fetch_open_orders` | `trading/inquire-daily-ccld` | within 3 months `TTTC0081R` / `VTTC0081R` | business-date range, account, symbol and order ID; cumulative order totals, not individual executions |
+| cancellation eligibility | `trading/inquire-psbl-rvsecncl` | `TTTC0084R` / unverified | obtain eligible quantity and original order routing identifiers before cancellation |
+| sellable quantity | `trading/inquire-psbl-sell` | `TTTC8408R` / unverified | `ord_psbl_qty`; the balance endpoint also supplies this field, but its freshness must be checked |
 | `cancel_order` | `trading/order-rvsecncl` | `TTTC0013U` / `VTTC0013U` | `KRX_FWDG_ORD_ORGNO`, `ORGN_ODNO`, cancellation code `02`, remaining quantity |
 | trading calendar | `quotations/chk-holiday` | `CTCA0903R` / unverified | `BASS_DT`, `opnd_yn`; cache because official guidance recommends approximately one call per day |
 
@@ -104,11 +105,62 @@ coverage must be recorded; neither is guaranteed by an API response being succes
 
 ### Balances and orders
 
-For KRW, define settled cash, cash reserved by open orders and other settlement
-amounts separately. Preserve their KIS meanings rather than changing `total` to
-match buying power. Check cash-only buying power immediately before buying, and
-sellable quantity before selling. The shared collector account is not a dedicated
-trading account: no existing holding may be silently adopted or sold by the bot.
+Initial order-capable operation requires a dedicated, cash-only account without
+existing positions, open orders or unsettled transactions. Quote-only operation
+may use the collector credentials. External cash transfers or manual trades after
+initialization block new orders until explicitly reconciled. This restriction
+avoids guessing an opening economic cash balance from KIS settlement summaries.
+
+Seed a durable bot cash ledger with the verified opening `dnca_tot_amt`. Establish
+the absence of unsettled transactions using broker history and settlement dates;
+an empty position list alone is insufficient. Persist the baseline, order intents,
+cumulative recognized fills and pending settlements in the existing Freqtrade DB.
+Use the existing KeyValueStore for the account-scoped baseline and Order/Trade
+records for subsequent cash movements; store no account number in public IDs.
+
+Define the normalized KRW wallet as follows (all values are cash, not stock value):
+
+- `total = opening cash - recognized buy costs + recognized net sale proceeds`.
+- `R` is cash reserved for remaining buy intents/orders, including unresolved
+  submissions and their conservative cost allowance. Market-order reservations
+  use the broker's buying-power valuation, not the last traded price.
+- `U` is net sale proceeds not yet confirmed as settled. Do not reuse those proceeds
+  for buying until settlement is established by the broker and settlement calendar.
+- `P` is the lowest non-credit `nrcvb_buy_amt` across the configured symbols,
+  queried with the documented cash-only parameters. It is a current safety cap,
+  not the ledger's `total`. Check `nrcvb_buy_qty` for the specific order as well.
+- `free = max(0, min(total - R - U, P))`; `used = total - free`.
+
+Reject negative totals, unexplained differences and inconsistent snapshots rather
+than clamping them into a successful balance. `used` includes reservations,
+unsettled sale holds and broker-imposed restrictions; expose the breakdown in
+sanitized `info`. Preserve `dnca_tot_amt`, `nxdy_excc_amt` and
+`prvs_rcdl_excc_amt` as broker settlement facts, never add them together or treat
+them as independently spendable balances. A successful cap check does not erase
+a ledger/broker discrepancy. Snapshot ordering must account for already submitted
+orders; a changed account during reconciliation requires a fresh snapshot.
+
+Illustrative zero-tax/fee-inclusive arithmetic, not an account tariff:
+
+| Event | `total` | `R` | `U` | `free` when the broker cap is not lower | `used` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Verified clean opening | 1,000,000 | 0 | 0 | 1,000,000 | 0 |
+| Reserve a buy including a 100 cost allowance | 1,000,000 | 20,100 | 0 | 979,900 | 20,100 |
+| Buy fills for 20,000 plus 100 costs | 979,900 | 0 | 0 | 979,900 | 0 |
+| Sell fills for 20,000 less 200 costs | 999,700 | 0 | 19,800 | 979,900 | 19,800 |
+| Broker confirms settlement | 999,700 | 0 | 0 | 999,700 | 0 |
+
+Pending purchases are charged once at recognition, not again on their settlement
+date. The equity position is then valued separately by Freqtrade, avoiding the
+double-counting caused by using unsettled `dnca_tot_amt` as economic cash.
+Replayed fills replace the previous cumulative recognition instead of appending
+the same debit/credit again. Missing final costs retain a conservative reservation
+and block final cash reconciliation until verified or explicitly configured as an
+estimate; they must never silently become zero.
+
+For each security, `total = hldg_qty`, `free = ord_psbl_qty`, and
+`used = total - free`, after checking whole-share values and `0 <= free <= total`.
+Compare positions to the bot's recognized fills. Never adopt an unexplained holding.
 
 Order IDs must remain unique across business dates and account scopes. Keep the
 original order number and routing identifier needed for cancellation. Required
@@ -116,6 +168,25 @@ order fields include symbol, side, type, quantity, filled, remaining, status,
 price, average, cost and fee information; unknown fields use `None` where permitted.
 An order accepted by KIS is open until subsequent evidence establishes a terminal
 state. Partially filled/cancelled orders retain their filled quantity and costs.
+
+Normalize `ord_qty -> amount`, `tot_ccld_qty -> filled`, `rmn_qty -> remaining`,
+`ord_unpr -> price`, `avg_prvs -> average`, `tot_ccld_amt -> cost`, and
+`sll_buy_dvsn_cd` (`01` sell, `02` buy) to `side`. Preserve cancelled and rejected
+quantities (`cnc_cfrm_qty`, `rjct_qty`) separately: after cancellation, remaining
+need not equal amount minus filled. Use confirmed rejection/cancellation fields
+for terminal states, full cumulative fills for `closed`, and otherwise `open`.
+Inconsistent totals are errors. Order time comes from `ord_dt` plus `ord_tmd` in
+Asia/Seoul; it must not be presented as the timestamp of every execution.
+
+The documented daily inquiry returns cumulative order totals without individual
+execution IDs. Therefore the initial adapter declares `fetchMyTrades=False` and
+raises `NotSupported` for `fetch_my_trades`; it must not fabricate executions or
+sum successive snapshots. Freqtrade instead reconciles cumulative `fetch_order`
+fields and normalized order fees. This is a deliberate deviation from issue #1's
+initial execution-history requirement and must be recorded there before phase 1
+is accepted. Execution-level history remains unimplemented until an authoritative
+source with stable identity and timestamp is established. It is not a phase-1 claim
+that aggregate data fully meets CCXT's personal-trade contract.
 
 KRX session orders must use DAY semantics. Add DAY to Freqtrade's configuration,
 types and feature validation instead of claiming GTC support. At session close,
@@ -137,6 +208,22 @@ and confirmed amounts distinct; replace estimates without double charging. Do no
 hard-code a single tax rate for all stocks and ETFs. Missing cost rules block
 cost-qualified dry-run/backtest validation. Whole-share rounding and price-band
 tick rules must also reach Freqtrade's backtest precision calculations.
+
+Freqtrade currently seeds both `fee_open` and `fee_close` from one side-less
+`get_fee` call. Add a narrow cost-estimation hook with side, symbol, quantity,
+price and timestamp, retaining the existing calculation for other exchanges.
+Use it separately for entry and exit in live/dry-run and in backtesting at the
+historical trade timestamp. Buy commission and sell commission plus applicable
+taxes must have distinct amounts/rates. Update the exit estimate when its expected
+date, price or product rule changes, including positions held across a tax change.
+Do not reinterpret all equity costs as a single symmetric global `fee` setting.
+
+Order-level confirmed cost data must replace, not add to, estimates through the
+existing fee update path. KIS `prsm_tlex_smtl` is explicitly an estimated total
+expense, not proof of final commission/tax. Phase 5 must identify the authoritative
+final-cost source or retain estimated status and mark final-cost reconciliation
+unverified; it may not advertise confirmed costs from that field. Tests must cover
+asymmetric buy/sell costs, historical effective dates and repeated order snapshots.
 
 ## Implementation boundaries
 
