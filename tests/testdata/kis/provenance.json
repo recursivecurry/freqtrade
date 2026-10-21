@@ -1,0 +1,12 @@
+{
+  "ticker_005930.json": {
+    "kind": "public_market_response",
+    "environment": "live_read_only",
+    "endpoint": "/uapi/domestic-stock/v1/quotations/inquire-price",
+    "tr_id": "FHKST01010100",
+    "symbol": "005930/KRW",
+    "captured_at": "2026-10-21T14:37:15.941973+00:00",
+    "credentials": "not included",
+    "orders_submitted": 0
+  }
+}
