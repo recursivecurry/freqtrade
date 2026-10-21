@@ -173,9 +173,14 @@ Normalize `ord_qty -> amount`, `tot_ccld_qty -> filled`, `rmn_qty -> remaining`,
 `ord_unpr -> price`, `avg_prvs -> average`, `tot_ccld_amt -> cost`, and
 `sll_buy_dvsn_cd` (`01` sell, `02` buy) to `side`. Preserve cancelled and rejected
 quantities (`cnc_cfrm_qty`, `rjct_qty`) separately: after cancellation, remaining
-need not equal amount minus filled. Use confirmed rejection/cancellation fields
-for terminal states, full cumulative fills for `closed`, and otherwise `open`.
-Inconsistent totals are errors. Order time comes from `ord_dt` plus `ord_tmd` in
+need not equal amount minus filled. Positive working remainder always means
+`open`, even when some shares were cancelled or rejected. For example, amount 10,
+filled 3, cancelled 2 and remaining 5 is still open. Terminal states require zero
+working remainder and consistent whole-order evidence. A complete fill with no
+cancelled/rejected quantity takes precedence as `closed`; otherwise establish
+whole-order cancellation, rejection or expiry explicitly. Do not infer a terminal
+state from a nonzero cancelled quantity alone. Inconsistent totals are errors.
+Order time comes from `ord_dt` plus `ord_tmd` in
 Asia/Seoul; it must not be presented as the timestamp of every execution.
 
 The documented daily inquiry returns cumulative order totals without individual
