@@ -271,9 +271,10 @@ asymmetric buy/sell costs, historical effective dates and repeated order snapsho
 `Kis(Exchange)` owns Freqtrade integration and session/price policy. Local
 `KisSync(ccxt.Exchange)` and `KisAsync(ccxt.async_support.Exchange)` provide CCXT
 contracts. Shared request construction, token state and parsers live in
-`freqtrade/exchange/kis_adapter/`; sync and async HTTP transports must not block
-one another or refresh tokens concurrently. Start with existing HTTP libraries
-and CCXT helpers, not a new service or generic plugin framework.
+`freqtrade/exchange/kis_adapter/`. The two facades share a serialized read transport;
+the async facade runs blocking I/O and rate waits in a worker thread. Authentication
+is serialized with reads so there is no concurrent token refresh. Start with
+existing HTTP libraries and CCXT helpers, not a new service or generic plugin framework.
 
 Local registration must cover exchange validation, listing and resolver/client
 creation. Keep existing CCXT paths intact and reject unknown names. Do not patch
@@ -281,6 +282,43 @@ creation. Keep existing CCXT paths intact and reject unknown names. Do not patch
 `always_require_api_keys=True` so dry-run does not remove quote credentials.
 Sensitive configuration must use dedicated secret fields rather than logged
 `ccxt_config` dictionaries.
+
+### Client foundation
+
+`KisSync` and `KisAsync` accept `apiKey`, `secret`, optional `accountId` (eight
+ASCII digits), optional `uid` (two-digit account product), and
+`options.environment` (`paper` by default, or explicit `live`). Quote-only clients
+can omit both account fields. Creating two facades with the same `KisClient`
+shares authentication and pacing; mismatched credentials or environments fail.
+Freqtrade configuration/loading is a later phase and is not enabled yet.
+
+The transport uses Python's HTTPS implementation with certificate validation,
+fixed broker hosts, no redirects and no environment proxy inheritance. It accepts
+only the allowlisted GET endpoints above. The only POST is token issuance.
+Tokens are cached in memory, renewed 60 seconds before expiry, and issuance
+attempts are at least 60 seconds apart. Separate processes do not share this
+budget or cache; use dedicated app keys or coordinate them operationally.
+
+All requests are serialized and spaced at least 1.1 seconds apart in both
+environments. This conservative initial policy is not a claim about an account's
+quota; broker throttling still propagates as `RateLimitExceeded`. A request has
+a 30-second socket timeout. Authentication expiry permits at most one GET replay,
+subject to the issuance cooldown. Permission failures, throttling, transport errors
+and other business failures propagate without automatic retries. Exceptions omit
+broker messages, credentials, account queries and response bodies. Unknown
+business errors remain `ExchangeError` until their codes are verified.
+
+The FK100/NK100 page reader retains continuation headers/cursors and fails on a
+missing cursor, repeated cursor, failed page or page limit. It never returns a
+successful partial list. Domain-specific parsing and method capabilities arrive
+in later phases; the foundation advertises no broker methods yet.
+
+Each facade releases its reference on `close()`; the final release discards shared
+credentials and the token. HTTP responses are closed after each request. Cancelling
+an async await does not terminate an in-flight read in its worker; closing waits
+for serialized work to finish. This behavior applies only to read requests.
+Network-isolated tests exercise the transport, concurrency, cancellation and
+cleanup. No KIS order or paper-server validation is established by these tests.
 
 ## Fixtures and validation gates
 
