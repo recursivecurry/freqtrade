@@ -184,14 +184,37 @@ Order time comes from `ord_dt` plus `ord_tmd` in
 Asia/Seoul; it must not be presented as the timestamp of every execution.
 
 The documented daily inquiry returns cumulative order totals without individual
-execution IDs. Therefore the initial adapter declares `fetchMyTrades=False` and
-raises `NotSupported` for `fetch_my_trades`; it must not fabricate executions or
-sum successive snapshots. Freqtrade instead reconciles cumulative `fetch_order`
-fields and normalized order fees. This is a deliberate deviation from issue #1's
-initial execution-history requirement and must be recorded there before phase 1
-is accepted. Execution-level history remains unimplemented until an authoritative
-source with stable identity and timestamp is established. It is not a phase-1 claim
-that aggregate data fully meets CCXT's personal-trade contract.
+execution IDs. The user accepted observation-interval synthetic fills on 2026-10-22.
+For consecutive consistent snapshots `(Q0, C0)` and `(Q1, C1)`, create one record
+with `amount=Q1-Q0`, `cost=C1-C0`, and weighted `price=cost/amount` when both deltas
+are positive. Use `tot_ccld_amt`, not rounded average price multiplied by quantity.
+This record can combine multiple actual executions. It must have
+`info.synthetic=True`, observation interval boundaries and
+`info.timestamp_kind=observation`; its timestamp is the observation time, never a
+claimed exchange execution time. The identifier is a durable internal record ID,
+not a broker execution ID.
+
+Persist the observed snapshot and new record atomically in the existing DB, scoped
+by account, business date and order identity. Repeated snapshots produce no records.
+After restart, continue from the persisted watermark; an observation gap produces
+one explicitly marked aggregate over that gap, not invented individual fills.
+The first nonzero snapshot without earlier observations produces a recovered
+aggregate with an unknown interval start, preserving its incomplete timing history.
+
+`fetch_my_trades` returns the persisted canonical records, not the cumulative
+snapshots. `since` filters observation timestamps and `limit` applies after ordering
+by observation time and internal sequence. This is a documented Freqtrade-targeted
+deviation from exchange-execution-time filtering; callers needing true execution
+timestamps must not use it. Freqtrade's order-date filter must retrieve the complete
+record set for that order without truncation. Enable `fetchMyTrades` only once this
+durable retrieval contract is implemented and tested.
+
+Require sums of canonical record amounts/costs to match the latest order totals.
+Negative deltas, a changed amount with missing/inconsistent cost, or changed gross
+cost without changed quantity trigger reconciliation, not a fabricated zero-size
+or negative fill. Preserve prior records and block publication of an inconsistent
+history until resolved. Fee-only corrections update normalized order fees separately
+and never create fills; missing or estimated fees are not final execution fees.
 
 The pinned official [private fill-notification example](https://github.com/koreainvestment/open-trading-api/blob/2077773a69a428daf63e148182511f068cc45de3/examples_llm/domestic_stock/ccnl_notice/ccnl_notice.py)
 does expose event quantity, price and time over WebSocket (`H0STCNI0` production,
@@ -202,8 +225,9 @@ Combining order number, second-resolution time, quantity and price is not proof 
 uniqueness: identical fills can occur within the same second. Supporting complete
 personal trade history through this route requires a verified identity/deduplication
 and reconnect/backfill contract, plus expansion of the initial no-WebSocket scope.
-Until the user accepts the cumulative-only contract or that alternative is verified,
-the execution-history scope decision remains a phase-1 merge blocker.
+The initial implementation uses the accepted synthetic-delta contract above and
+does not depend on this unverified WebSocket recovery route. Exact broker execution
+history remains unsupported and must not be advertised as implemented.
 
 KRX session orders must use DAY semantics. Add DAY to Freqtrade's configuration,
 types and feature validation instead of claiming GTC support. At session close,
