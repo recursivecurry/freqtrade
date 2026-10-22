@@ -569,3 +569,79 @@ No broker order/cancel request was sent. Phase 6 must verify private endpoint
 availability, real paper fills/cancellations and DB reconciliation with a working
 paper-account binding before this adapter can be described as validated for paper
 trading.
+
+## Paper validation commands
+
+The validation module runs one explicit operation against the paper server and
+compares normalized orders, whole-share positions and estimated costs with the
+Freqtrade DB in both directions, including DB orders absent from the canonical
+ledger. An inconsistent DB blocks mutations before transmission, and additional
+buys into an existing same-symbol Trade are rejected. It uses the bundled
+no-signal `KisValidationStrategy`, never starts a
+strategy loop, disables RPC/message integrations, and does not cancel on shutdown.
+Stop any KIS bot using the same account before running it. The existing Kraken bot
+can continue using its separate database and account.
+
+Supply a private Freqtrade configuration with explicit `db_url`, KIS paper
+credentials, static symbols, DAY lifetimes, verified sessions, settlement calendar
+and cost rules. The tool switches to private-account mode even if the configuration
+defaults to dry-run; its transport guard blocks broker writes unless the selected
+operation is `submit` or `cancel` and `--allow-paper-orders` is present. Production
+environments are rejected before bot initialization. Preflight and reconciliation
+can update the local ledger/DB, but send no broker order/cancel requests.
+
+Run the read-only broker preflight first:
+
+```bash
+python -m freqtrade.exchange.kis_adapter.validate \
+  --config user_data/kis-validation.json \
+  --report user_data/kis-preflight-01.json
+```
+
+The report path must be new. Reports are created with mode `0600` on POSIX and
+contain only selected business fields, version/source hashes and request paths;
+credentials, account numbers, query parameters, payloads and exception messages
+are omitted. CLI logging is suppressed to avoid configuration-error excerpts
+containing secrets. Reports still contain private trading/position information;
+keep them local and do not commit them.
+
+After a successful preflight, set `KIS_VALIDATION_LIMIT_PRICE` to an operator-checked
+legal whole-KRW limit inside the broker's daily price bounds. A nonmarketable limit
+can exercise cancellation, but a fill remains possible as prices change.
+
+```bash
+python -m freqtrade.exchange.kis_adapter.validate \
+  --config user_data/kis-validation.json --action submit --allow-paper-orders \
+  --symbol 005930/KRW --side buy --kind limit --amount 1 \
+  --price "$KIS_VALIDATION_LIMIT_PRICE" --report user_data/kis-submit-01.json
+```
+
+Use the returned `submitted_order` as `KIS_VALIDATION_ORDER_ID` for cancellation.
+An acknowledgement is not proof that cancellation finished; inspect the reported
+order state and repeat read-only reconciliation when needed.
+
+```bash
+python -m freqtrade.exchange.kis_adapter.validate \
+  --config user_data/kis-validation.json --action cancel --allow-paper-orders \
+  --symbol 005930/KRW --order-id "$KIS_VALIDATION_ORDER_ID" \
+  --report user_data/kis-cancel-01.json
+
+python -m freqtrade.exchange.kis_adapter.validate \
+  --config user_data/kis-validation.json --action reconcile \
+  --report user_data/kis-reconcile-01.json
+```
+
+Each invocation is a fresh process and reuses the same DB. Tokens are memory-only:
+leave at least 60 seconds between fresh processes sharing an app key, and respect
+any broker cooldown. Do not automatically rerun `submit` after a timeout or missing
+report; run `reconcile` first. A new report file is required for every invocation.
+For actual fills, use an explicitly chosen marketable limit or `--kind market`,
+then reconcile; selling requires owned sellable shares. Use a new paper test
+account with no preexisting positions or unsettled activity for the first run.
+
+Exit code zero means that operation's DB checks passed. It does not certify the
+whole paper integration: every report retains `phase6_complete=false`, and pending
+fills, cancellation completion, FreqUI comparison, actual server limitations and
+final costs must be recorded separately. No private-server operation is claimed
+as verified until paper credentials are available and these commands are actually
+run. Network-isolated tests of the tool remain synthetic evidence.
