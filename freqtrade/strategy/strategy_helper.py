@@ -1,4 +1,6 @@
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 import pandas as pd
 
@@ -123,6 +125,7 @@ def merge_informative_pair(
     append_timeframe: bool = True,
     date_column: str = "date",
     suffix: str | None = None,
+    publication_time: Callable[[str, datetime], datetime | None] | None = None,
 ) -> pd.DataFrame:
     """
     Correctly merge informative samples to the original dataframe, avoiding lookahead bias.
@@ -147,9 +150,14 @@ def merge_informative_pair(
     :param date_column: A custom date column name.
     :param suffix: A string suffix to add at the end of the informative columns. If specified,
                    append_timeframe must be false.
+    :param publication_time: Exchange publication clock, required for KIS session-labelled data.
     :return: Merged dataframe
     :raise: ValueError if the secondary timeframe is shorter than the dataframe timeframe
     """
+    if informative.attrs.get("kis_session_clock") and publication_time is None:
+        raise ValueError(
+            "KIS informative merging requires publication_time=dp.candle_publication_time"
+        )
     prepared = _prepare_informative_pair(
         informative,
         timeframe,
@@ -158,7 +166,48 @@ def merge_informative_pair(
         date_column=date_column,
         suffix=suffix,
     )
-    return _merge_prepared_informative_pair(dataframe, prepared, ffill=ffill)
+    if publication_time is None:
+        return _merge_prepared_informative_pair(dataframe, prepared, ffill=ffill)
+    reserved = {"_ft_publication", "_ft_row"}
+    if reserved.intersection(dataframe.columns) or reserved.intersection(
+        prepared.dataframe.columns
+    ):
+        raise ValueError("Reserved publication merge column")
+    left = dataframe.copy()
+    left["_ft_row"] = range(len(left))
+    left["_ft_publication"] = pd.to_datetime(
+        [publication_time(timeframe, value.to_pydatetime()) for value in left["date"]], utc=True
+    ).astype("datetime64[ns, UTC]")
+    right = prepared.dataframe.copy()
+    right[prepared.date_merge] = pd.to_datetime(
+        [
+            publication_time(timeframe_inf, value.to_pydatetime())
+            for value in informative[date_column]
+        ],
+        utc=True,
+    ).astype("datetime64[ns, UTC]")
+    right = right.dropna(subset=[prepared.date_merge]).sort_values(prepared.date_merge)
+    valid = left.dropna(subset=["_ft_publication"]).sort_values("_ft_publication")
+    if ffill:
+        merged = pd.merge_asof(
+            valid,
+            right,
+            left_on="_ft_publication",
+            right_on=prepared.date_merge,
+            direction="backward",
+        )
+    else:
+        merged = pd.merge(
+            valid, right, left_on="_ft_publication", right_on=prepared.date_merge, how="left"
+        )
+    missing = left[left["_ft_publication"].isna()]
+    if not missing.empty:
+        merged = pd.concat([merged, missing], ignore_index=True)
+    return (
+        merged.sort_values("_ft_row")
+        .drop(columns=["_ft_row", "_ft_publication", prepared.date_merge])
+        .reset_index(drop=True)
+    )
 
 
 def stoploss_from_open(

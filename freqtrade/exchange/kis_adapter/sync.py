@@ -7,7 +7,7 @@ import ccxt
 from freqtrade.exchange.kis_adapter.client import KisClient
 from freqtrade.exchange.kis_adapter.market_data import KisMarketData
 from freqtrade.exchange.kis_adapter.orders import validate_market_order
-from freqtrade.exchange.kis_adapter.rules import round_price
+from freqtrade.exchange.kis_adapter.rules import TIMEFRAMES, round_price
 from freqtrade.exchange.kis_adapter.trading import KisTrading
 
 
@@ -58,7 +58,7 @@ class KisSync(ccxt.Exchange):
                     for name in base["has"]
                 },
                 "requiredCredentials": {"apiKey": True, "secret": True},
-                "timeframes": {"1m": "1m", "5m": "5m", "1d": "1d"},
+                "timeframes": dict(zip(TIMEFRAMES, TIMEFRAMES, strict=True)),
             },
         )
 

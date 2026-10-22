@@ -276,13 +276,16 @@ def _create_and_merge_informative_pair(
 
     inf_metadata = {"pair": asset, "timeframe": timeframe}
     inf_dataframe = strategy.dp.get_pair_dataframe(asset, timeframe1, candle_type)
+    session_clock = bool(inf_dataframe.attrs.get("kis_session_clock"))
     if inf_dataframe.empty:
         raise ValueError(
             f"Informative dataframe for ({asset}, {timeframe1}, {candle_type}) is empty. "
             "Can't populate informative indicators."
         )
     cache: InformativeCache | None = (
-        getattr(strategy, "_ft_informative_cache", None) if inf_data.cache else None
+        getattr(strategy, "_ft_informative_cache", None)
+        if inf_data.cache and not session_clock
+        else None
     )
     cache_key = InformativeCacheKey(
         callback=populate_indicators_fn,
@@ -341,5 +344,6 @@ def _create_and_merge_informative_pair(
             ffill=inf_data.ffill,
             append_timeframe=False,
             date_column=date_column,
+            publication_time=strategy.dp.candle_publication_time if session_clock else None,
         )
     return dataframe

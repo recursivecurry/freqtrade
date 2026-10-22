@@ -19,7 +19,16 @@ from freqtrade.exchange.kis_adapter.parsers import (
     parse_order_book,
     parse_ticker,
 )
-from freqtrade.exchange.kis_adapter.rules import SEOUL, Session, broker_timestamp, number
+from freqtrade.exchange.kis_adapter.rules import (
+    PERIOD_TIMEFRAMES,
+    SEOUL,
+    TIMEFRAMES,
+    Session,
+    broker_timestamp,
+    intraday_windows,
+    number,
+    period_bounds,
+)
 
 
 @lru_cache(maxsize=4)
@@ -60,24 +69,14 @@ def complete_minutes(rows: list[list], session: Session, now: int, timeframe: st
     completed = [t for t in allowed if t + 60_000 <= now]
     if any(t not in by_time for t in completed):
         raise ccxt.ExchangeError("kis missing completed intraday candle")
-    if timeframe == "1m":
-        return [by_time[t] for t in completed]
-    if any(
-        int((moment - session.opening).total_seconds()) % 300
-        for moment in (session.auction, session.closing)
-    ):
-        raise ccxt.NotSupported("kis five-minute session boundaries are not aligned")
     result = []
-    for i in range(0, len(allowed) - 1, 5):
-        group = allowed[i : i + 5]
-        if len(group) != 5 or allowed[-1] in group:
-            raise ccxt.NotSupported("kis five-minute session boundaries are not aligned")
-        if group[-1] + 60_000 > now:
-            break
-        bars = [by_time[t] for t in group]
+    for first, end in intraday_windows(session, timeframe):
+        if end > now:
+            continue
+        bars = [by_time[t] for t in allowed if first <= t < end]
         result.append(
             [
-                group[0],
+                first,
                 bars[0][1],
                 max(b[2] for b in bars),
                 min(b[3] for b in bars),
@@ -85,9 +84,6 @@ def complete_minutes(rows: list[list], session: Session, now: int, timeframe: st
                 sum(b[5] for b in bars),
             ]
         )
-    closing = allowed[-1]
-    if closing + 300_000 <= now:
-        result.append(by_time[closing])
     return result
 
 
@@ -156,7 +152,7 @@ class KisMarketData:
     def _daily(self, code: str, start: date, end: date) -> dict[date, list]:
         result: dict[date, list] = {}
         cursor = end
-        for _ in range(10):
+        for _ in range(100):
             payload, _ = self.client.get(
                 "quotations/inquire-daily-itemchartprice",
                 "FHKST03010100",
@@ -267,7 +263,7 @@ class KisMarketData:
                 self._minute_cache[cache_key] = complete
         return complete
 
-    def _history_calendar(self, since: int | None, now: datetime) -> list[date]:
+    def _history_calendar(self, since: int | None, now: datetime, timeframe="1m") -> list[date]:
         if since is not None and (
             isinstance(since, bool) or not isinstance(since, int) or since < 0
         ):
@@ -282,8 +278,11 @@ class KisMarketData:
             )
         except (ValueError, OverflowError, OSError):
             raise ccxt.BadRequest("kis requires a verified history calendar") from None
-        if first < now.date() - timedelta(days=365):
-            raise ccxt.NotSupported("kis initial history window is limited to 365 days")
+        history_days = 3660 if timeframe in PERIOD_TIMEFRAMES else 365
+        if first < now.date() - timedelta(days=history_days):
+            raise ccxt.NotSupported("kis requested history exceeds the supported window")
+        if timeframe in PERIOD_TIMEFRAMES:
+            first = period_bounds(first, timeframe)[0]
         days = [first + timedelta(days=i) for i in range((now.date() - first).days + 1)]
         return days
 
@@ -297,28 +296,48 @@ class KisMarketData:
             raise ccxt.ExchangeError("kis daily candle contradicts the verified calendar")
         return [candles[day] for day in expected]
 
+    def _periods(self, code: str, timeframe: str, days: list[date], today: date):
+        daily = self._completed_daily(code, days, today)
+        groups: dict[date, list[list]] = {}
+        for row in daily:
+            day = datetime.fromtimestamp(row[0] / 1000, SEOUL).date()
+            first, end = period_bounds(day, timeframe)
+            if end <= today:
+                groups.setdefault(first, []).append(row)
+        return [
+            [
+                broker_timestamp(first.strftime("%Y%m%d")),
+                rows[0][1],
+                max(row[2] for row in rows),
+                min(row[3] for row in rows),
+                rows[-1][4],
+                sum(row[5] for row in rows),
+            ]
+            for first, rows in sorted(groups.items())
+        ]
+
     def fetch_ohlcv(
         self, code: str, timeframe: str, since: int | None, limit: int | None
     ) -> list[list]:
         """Return completed, ordered bars or fail on calendar/history gaps."""
-        if timeframe not in ("1m", "5m", "1d"):
-            raise ccxt.NotSupported("kis supports only 1m, 5m and 1d candles")
+        if timeframe not in TIMEFRAMES:
+            raise ccxt.NotSupported("kis unsupported candle timeframe")
         limit = 500 if limit is None else limit
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10000:
             raise ccxt.BadRequest("kis candle limit must be 1 through 10000")
         now = datetime.now(SEOUL)
-        days = self._history_calendar(since, now)
+        days = self._history_calendar(since, now, timeframe)
         if not days:
             return []
         if (
             self.client.environment == "paper"
-            and timeframe != "1d"
+            and timeframe not in PERIOD_TIMEFRAMES
             and since is not None
             and any(self.session(day) is not None and day < now.date() for day in days)
         ):
             raise ccxt.NotSupported("kis paper intraday history is limited to the current day")
-        if timeframe == "1d":
-            result = self._completed_daily(code, days, now.date())
+        if timeframe in PERIOD_TIMEFRAMES:
+            result = self._periods(code, timeframe, days, now.date())
         else:
             result = []
             ordered_days = reversed(days) if since is None else days

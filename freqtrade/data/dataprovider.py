@@ -76,6 +76,11 @@ class DataProvider:
             return self._exchange.candle_close_time(timeframe, when, now)
         return when + timedelta(seconds=timeframe_to_seconds(timeframe))
 
+    def candle_publication_time(self, timeframe: str, when: datetime) -> datetime | None:
+        if self._exchange:
+            return self._exchange.candle_publication_time(timeframe, when)
+        return when + timedelta(seconds=timeframe_to_seconds(timeframe))
+
     def _set_dataframe_max_index(self, pair: str, limit_index: int):
         """
         Limit analyzed dataframe to max specified index.
@@ -409,10 +414,22 @@ class DataProvider:
             # Cut date to timeframe-specific date.
             # This is necessary to prevent lookahead bias in callbacks through informative pairs.
             if self.__slice_date:
-                cutoff_date = timeframe_to_prev_date(timeframe, self.__slice_date)
-                data = data.loc[data["date"] < cutoff_date]
+                if self._exchange and not uses_continuous_candles(
+                    self._config.get("exchange", {}).get("name", "")
+                ):
+                    available = data["date"].map(
+                        lambda value: self._exchange.candle_publication_time(
+                            timeframe, value.to_pydatetime()
+                        )
+                    )
+                    data = data.loc[available.notna() & (available <= self.__slice_date)]
+                else:
+                    cutoff_date = timeframe_to_prev_date(timeframe, self.__slice_date)
+                    data = data.loc[data["date"] < cutoff_date]
         if len(data) == 0:
             logger.warning(f"No data found for ({pair}, {timeframe}, {candle_type}).")
+        if self._config.get("exchange", {}).get("name") == "kis":
+            data.attrs["kis_session_clock"] = True
         return data
 
     def get_analyzed_dataframe(self, pair: str, timeframe: str) -> tuple[DataFrame, datetime]:
