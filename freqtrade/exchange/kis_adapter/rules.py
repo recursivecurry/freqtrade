@@ -10,6 +10,39 @@ import ccxt
 
 
 SEOUL = ZoneInfo("Asia/Seoul")
+INTRADAY_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
+PERIOD_TIMEFRAMES = ("1d", "1w", "1M")
+TIMEFRAMES = (*INTRADAY_MINUTES, *PERIOD_TIMEFRAMES)
+
+
+def period_bounds(day: date, timeframe: str) -> tuple[date, date]:
+    if timeframe == "1d":
+        return day, day + timedelta(days=1)
+    if timeframe == "1w":
+        first = day - timedelta(days=day.weekday())
+        return first, first + timedelta(days=7)
+    if timeframe == "1M":
+        first = day.replace(day=1)
+        return first, (first.replace(day=28) + timedelta(days=4)).replace(day=1)
+    raise ccxt.NotSupported("kis unsupported calendar period")
+
+
+def intraday_windows(session: "Session", timeframe: str) -> list[tuple[int, int]]:
+    minutes = INTRADAY_MINUTES[timeframe]
+    if timeframe == "5m" and any(
+        int((moment - session.opening).total_seconds()) % 300
+        for moment in (session.auction, session.closing)
+    ):
+        raise ccxt.NotSupported("kis five-minute session boundaries are not aligned")
+    starts = range(0, int((session.auction - session.opening).total_seconds() // 60), minutes)
+    windows = []
+    for offset in starts:
+        first = session.opening + timedelta(minutes=offset)
+        end = min(first + timedelta(minutes=minutes), session.auction)
+        windows.append((int(first.timestamp() * 1000), int(end.timestamp() * 1000)))
+    closing = int(session.closing.timestamp() * 1000)
+    windows.append((closing, closing + (300_000 if timeframe == "5m" else 60_000)))
+    return windows
 
 
 def number(value, *, positive=False, integer=False, signed=False) -> Decimal:

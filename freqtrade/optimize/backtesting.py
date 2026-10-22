@@ -1646,7 +1646,7 @@ class Backtesting:
         Spread into detail data
         """
         current_detail_time: datetime = row[DATE_IDX]
-        exit_candle_end = current_detail_time + self.timeframe_td
+        exit_candle_end = self.exchange.candle_end_time(self.timeframe, current_detail_time)
         detail_data = self.detail_data[pair]
         dates = detail_data["date"]
         # "date" is sorted ascending, so the window
@@ -1692,7 +1692,7 @@ class Backtesting:
 
     def _time_pair_generator_det(self, current_time: datetime, pairs: list[str]):
         for current_time_det, is_first, has_detail, idx in self._time_generator_det(
-            current_time, current_time + self.timeframe_td
+            current_time, self.exchange.candle_end_time(self.timeframe, current_time)
         ):
             # Pairs that have open trades should be processed first
             new_pairlist = list(dict.fromkeys([t.pair for t in LocalTrade.bt_trades_open] + pairs))
@@ -1718,7 +1718,19 @@ class Backtesting:
         # Indexes per pair, so some pairs are allowed to have a missing start.
         indexes: dict = defaultdict(int)
 
-        for current_time in self._time_generator(start_date, end_date):
+        times = (
+            self._time_generator(start_date, end_date)
+            if self.exchange.get_option("ohlcv_fill_missing")
+            else sorted(
+                {
+                    row[DATE_IDX].to_pydatetime()
+                    for rows in data.values()
+                    for row in rows
+                    if start_date < row[DATE_IDX] <= end_date
+                }
+            )
+        )
+        for current_time in times:
             # Loop for each main candle.
             self.check_abort()
 

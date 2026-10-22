@@ -18,9 +18,12 @@ from freqtrade.exchange.exchange_types import FtHas
 from freqtrade.exchange.kis_adapter import KisAsync, KisSync
 from freqtrade.exchange.kis_adapter.costs import estimate_cost
 from freqtrade.exchange.kis_adapter.rules import (
+    PERIOD_TIMEFRAMES,
     SEOUL,
     broker_timestamp,
+    intraday_windows,
     number,
+    period_bounds,
     round_price,
     tick_size,
 )
@@ -189,23 +192,38 @@ class Kis(Exchange):
             return False
 
     def candle_execution_time(self, timeframe: str, when: datetime) -> datetime:
-        """Execute a daily broker candle at that business date's actual opening."""
-        if timeframe != "1d" or when.astimezone(SEOUL).time() != time.min:
+        """Execute a calendar-labelled bar at its first verified trading opening."""
+        if timeframe not in PERIOD_TIMEFRAMES or when.astimezone(SEOUL).time() != time.min:
             return when
+        first, end = period_bounds(when.astimezone(SEOUL).date(), timeframe)
+        for offset in range((end - first).days):
+            session = self._api._data.session(first + timedelta(days=offset))
+            if session:
+                return session.opening.astimezone(UTC)
+        raise OperationalException("KIS candle period has no trading session")
+
+    def candle_end_time(self, timeframe, when):
+        if timeframe in PERIOD_TIMEFRAMES:
+            end = period_bounds(when.astimezone(SEOUL).date(), timeframe)[1]
+            return datetime.combine(end, time.min, SEOUL).astimezone(UTC)
         session = self._api._data.session(when.astimezone(SEOUL).date())
-        return session.opening.astimezone(UTC) if session else when
+        if session:
+            for first, end_ms in intraday_windows(session, timeframe):
+                if first == dt_ts(when):
+                    return dt_from_ts(end_ms)
+        return super().candle_end_time(timeframe, when)
 
     def candle_close_time(self, timeframe, when, now):
-        """Publish a daily signal at the following verified session's opening."""
-        if timeframe != "1d":
-            return super().candle_close_time(timeframe, when, now)
+        """Publish a completed calendar-period signal at the next verified opening."""
+        if timeframe not in PERIOD_TIMEFRAMES:
+            return self.candle_end_time(timeframe, when)
         try:
-            if dt_ts(when) != self._daily_publication_cutoff(now):
+            if dt_ts(when) != self._period_publication_cutoff(timeframe, now):
                 return None
-            start = when.astimezone(SEOUL).date()
+            start = period_bounds(when.astimezone(SEOUL).date(), timeframe)[1]
             end = now.astimezone(SEOUL).date()
             following = None
-            for index in range(1, (end - start).days + 1):
+            for index in range((end - start).days + 1):
                 session = self._api._data.session(start + timedelta(days=index))
                 if session and following is None:
                     following = session.opening
@@ -226,11 +244,16 @@ class Kis(Exchange):
         if dataframe.empty:
             return
         actual = {dt_ts(value.to_pydatetime()) for value in dataframe["date"]}
+        if len(actual) != len(dataframe):
+            raise OperationalException("KIS dataset contains duplicate candles")
         earliest, latest = min(actual), max(actual)
         start, end = (
             dt_from_ts(earliest).astimezone(SEOUL).date(),
             dt_from_ts(latest).astimezone(SEOUL).date(),
         )
+        if timeframe in PERIOD_TIMEFRAMES:
+            start = period_bounds(start, timeframe)[0]
+            end = period_bounds(end, timeframe)[1] - timedelta(days=1)
         expected = set()
         for index in range((end - start).days + 1):
             day = start + timedelta(days=index)
@@ -238,17 +261,10 @@ class Kis(Exchange):
             if session is None:
                 continue
             labels = (
-                [broker_timestamp(day.strftime("%Y%m%d"))]
-                if timeframe == "1d"
-                else session.minute_starts()
+                [broker_timestamp(period_bounds(day, timeframe)[0].strftime("%Y%m%d"))]
+                if timeframe in PERIOD_TIMEFRAMES
+                else [first for first, _ in intraday_windows(session, timeframe)]
             )
-            if timeframe == "5m":
-                if any(
-                    int((moment - session.opening).total_seconds()) % 300
-                    for moment in (session.auction, session.closing)
-                ):
-                    raise OperationalException("KIS five-minute session boundaries are not aligned")
-                labels = labels[::5]
             expected.update(value for value in labels if earliest <= value <= latest)
         if actual != expected:
             raise OperationalException("KIS dataset has a session gap or an out-of-session candle")
@@ -420,30 +436,46 @@ class Kis(Exchange):
         return self._async_get_candle_history(pair, timeframe, candle_type)
 
     def _daily_publication_cutoff(self, now):
+        return self._period_publication_cutoff("1d", now)
+
+    def _period_publication_cutoff(self, timeframe, now):
         sessions = [
             self._api._data.session(datetime.fromisoformat(day).date())
             for day in sorted(self._kis_options.get("sessions", {}))
             if day <= now.astimezone(SEOUL).date().isoformat()
         ]
         opened = [session for session in sessions if session and session.opening <= now]
-        return broker_timestamp(opened[-2].opening.strftime("%Y%m%d")) if len(opened) >= 2 else None
+        if not opened:
+            return None
+        current = period_bounds(opened[-1].opening.date(), timeframe)[0]
+        previous = [
+            period_bounds(session.opening.date(), timeframe)[0]
+            for session in opened
+            if period_bounds(session.opening.date(), timeframe)[0] < current
+        ]
+        return broker_timestamp(max(previous).strftime("%Y%m%d")) if previous else None
 
     def _now_is_time_to_refresh(self, pair, timeframe, candle_type):
         now = dt_now()
-        if timeframe == "1d":
-            cutoff = self._daily_publication_cutoff(now)
+        if timeframe in PERIOD_TIMEFRAMES:
+            cutoff = self._period_publication_cutoff(timeframe, now)
             return cutoff is not None and cutoff > self._pairs_last_refresh_time.get(
                 (pair, timeframe, candle_type), 0
             )
         session = self._api._data.session(now.astimezone(SEOUL).date())
-        if not session or now < session.opening or dt_ts(now) > dt_ts(session.closing) + 310_000:
+        if not session or now < session.opening:
             return False
-        return super()._now_is_time_to_refresh(pair, timeframe, candle_type)
+        completed = [
+            first for first, end in intraday_windows(session, timeframe) if end <= dt_ts(now)
+        ]
+        return bool(completed) and max(completed) > self._pairs_last_refresh_time.get(
+            (pair, timeframe, candle_type), 0
+        )
 
     async def _async_get_candle_history(self, pair, timeframe, candle_type, since_ms=None):
         result = await super()._async_get_candle_history(pair, timeframe, candle_type, since_ms)
-        if timeframe == "1d" and since_ms is None:
-            cutoff = self._daily_publication_cutoff(dt_now())
+        if timeframe in PERIOD_TIMEFRAMES and since_ms is None:
+            cutoff = self._period_publication_cutoff(timeframe, dt_now())
             rows = [row for row in result[3] if cutoff is not None and row[0] <= cutoff]
             return pair, timeframe, candle_type, rows, False
         return result

@@ -1247,6 +1247,9 @@ class Exchange(LoggingMixin):
         """Return the execution time represented by a backtest candle."""
         return when
 
+    def candle_end_time(self, timeframe: str, when: datetime) -> datetime:
+        return when + timedelta(seconds=timeframe_to_seconds(timeframe))
+
     def candle_close_time(self, timeframe: str, when: datetime, now: datetime) -> datetime | None:
         """Return when a candle's signal becomes available."""
         return when + timedelta(seconds=timeframe_to_seconds(timeframe))

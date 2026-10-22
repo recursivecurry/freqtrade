@@ -249,7 +249,7 @@ def test_missing_calendar_data_and_history_failures():
         data.fetch_ohlcv("005930", "1m", since, 100)
     assert not client.get.called
     with pytest.raises(ccxt.NotSupported):
-        data.fetch_ohlcv("005930", "1h", since, 100)
+        data.fetch_ohlcv("005930", "2h", since, 100)
     with pytest.raises(ccxt.BadRequest):
         data.fetch_ohlcv("005930", "1m", since, 0)
     with pytest.raises(ccxt.NotSupported):

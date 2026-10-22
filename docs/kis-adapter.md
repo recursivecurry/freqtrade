@@ -91,7 +91,7 @@ CCXT base helpers, including `set_markets_from_exchange`.
 OHLCV rows are `[UTC milliseconds, open, high, low, close, volume]` in ascending
 order. Implement `since` and `limit` with bounded pagination, duplicate detection
 and explicit failure when the requested history cannot be obtained. Supported
-initial timeframes are 1m, 5m and 1d. Do not begin trading without sufficient
+supported timeframes are 1m, 5m, 15m, 30m, 1h, 1d, 1w and 1M. Do not begin trading without sufficient
 completed warm-up candles.
 
 Business dates use Asia/Seoul. Before implementing intraday conversion, establish
@@ -162,7 +162,10 @@ inside its high/low range before caching. Corporate-action flags or a nonzero
 split/adjustment rate reject the day pending reconciliation. This gate detects
 inconsistent price bases; it does not implement split/dividend accounting.
 
-History is bounded to the latest 365 calendar days. Minute pagination moves to the
+Intraday history is bounded to the latest 365 calendar days; daily and aggregated
+weekly/monthly history accepts starting dates up to 3,660 days back. See the
+[extension's calendar and period rules](kis-market-data.md#candle-boundaries-and-history).
+Minute pagination moves to the
 previous minute; daily pagination moves to the previous date. Failed pages,
 conflicting duplicates, missing completed bars and calendar contradictions fail
 the whole call. `since` selects the first matching bars, while an omitted `since`

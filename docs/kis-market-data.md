@@ -1,9 +1,39 @@
 # KIS candle and investor-flow extension
 
 The extension tracked in [issue #1](https://github.com/recursivecurry/freqtrade/issues/1)
-adds `15m`, `30m`, `1h`, `1w` and `1M` to the existing `1m`, `5m` and `1d`
-contract. Completed bars retain KST session boundaries and unadjusted prices.
+supports `1m`, `5m`, `15m`, `30m`, `1h`, `1d`, `1w` and `1M` candles.
+Completed bars retain KST session boundaries and unadjusted prices.
 Investor flow is a separate data source; it does not change CCXT's six OHLCV fields.
+
+## Candle boundaries and history
+
+Intraday aggregates start at the verified session opening. A final short bucket
+ends at the start of the closing auction; the closing print remains a separate
+bar. No bucket spans the ten-minute auction collection interval or an overnight
+gap. The new intervals accept short final continuous buckets and exceptional
+opening times. The existing five-minute alignment and five-minute closing-print
+delay are retained; other intervals expose the closing print after its source
+minute is complete. Runtime refresh and signal expiry use these actual endpoints.
+
+Weekly and monthly bars aggregate unadjusted native daily OHLCV. Labels are Monday
+midnight KST and the first calendar day of the month, respectively. These labels
+may be holidays; backtest executions map to the period's first verified session
+opening. A completed period's runtime signal publishes at the next verified
+trading opening. Current days and unfinished calendar weeks/months are excluded.
+Native daily volume can include activity outside the minute source's regular
+session, so it must not be described as a sum of regular-session minute volume.
+
+Intraday history remains limited to 365 calendar days in production and the
+current day in paper mode. Daily, weekly and monthly history accepts starting
+dates up to 3,660 days back, rounded to the beginning of the requested period.
+All covered dates require an explicit verified calendar, including weekends and
+holidays. Each daily request is paginated backward, with at most 100 pages.
+Insufficient history fails instead of shortening the strategy's warm-up. There
+is no claim that every listed security has ten years of broker history.
+
+Download/cache paths preserve the period labels. Backtests visit the actual
+session-labelled rows rather than advancing a monthly simulation by fixed
+30-day intervals. Continuous-market backtests retain their existing time grid.
 
 ## Verified API contracts
 
