@@ -91,6 +91,84 @@ flow collection only on the production **read-only** connection; paper/dry-run b
 can consume observations already stored by that collector. Production order writes
 remain disabled. No broker order or cancellation was sent for these checks.
 
+The implemented collector was also run after close against production quotes for
+two symbols. `tests/testdata/kis/flow_collection_verification.json` records four
+stored observations, source hashes and the audited request paths. A repeated run
+inserted zero duplicates. The audit permitted only token issuance and GET requests;
+broker order/cancel attempts were zero. This does not verify intraday updates.
+
+## Collect and use investor observations
+
+Use a separate private configuration with `exchange.name=kis`,
+`exchange.kis.environment=live`, production quote credentials, a static
+`pair_whitelist` and verified current-day session hours. The collector creates
+no bot, accepts no order action, and requests only public investor quotations.
+Do not replace a paper trading bot's credentials with these production keys.
+
+```bash
+python -m freqtrade.exchange.kis_adapter.investor_flow \
+  --config user_data/kis-flow.config.private.json \
+  --database user_data/kis-flow.sqlite
+```
+
+The default runs once. `--interval 300` keeps one process and its memory-only token
+alive between polls; intervals below 60 seconds are rejected. Stop with Ctrl-C.
+For separate one-shot processes, leave at least 60 seconds between token requests.
+The parent folder must exist. The SQLite file is created with permissions `0600`;
+existing paper-order state is independent. No collector is started automatically.
+
+Each poll reads the buy/sell rankings once for the whole configured symbol list,
+then the dated report for each symbol. A symbol absent from both ranking windows
+is unavailable. Conflicting overlapping ranking rows are also unavailable. The
+latest dated report and its returned history are retained; current-date rows
+require a configured session and at least ten minutes after its close. Unknown
+close schedules exclude the current-date row. The official calculation's variable
+publication delay can still mean that only a prior date is available.
+
+Successful rows and failures are appended atomically. Consecutive identical
+observations keep their first observation time; an A-to-B-to-A revision retains
+all three versions. Clock rollback and different values at one timestamp fail
+instead of rewriting history. Failed polls produce explicit unavailable
+observations, so the strategy does not silently keep using the previous success.
+The stored payload contains source/unit/basis, receive time, observation date,
+source business date when supplied, amounts, participant-specific reasons and
+the dated report's returned history. No keys, account IDs or tokens are stored.
+
+Set `exchange.kis.flow_database` to that file in the consuming bot/backtest
+configuration. The default is `user_data_dir/kis-flow.sqlite`. A paper or dry-run
+bot can read the same archive without authenticating to the production server.
+In `populate_indicators`, opt in explicitly:
+
+```python
+dataframe = self.dp.kis_investor_flow(
+    dataframe, metadata["pair"], timeframe=self.timeframe
+)
+```
+
+The result adds nullable whole-KRW columns:
+
+- `kis_estimate_foreign_krw`, `kis_estimate_institution_krw` and
+  `kis_estimate_individual_krw` (the individual intraday column is always missing).
+- `kis_daily_foreign_krw`, `kis_daily_institution_krw`,
+  `kis_daily_individual_krw` for the latest returned dated report.
+- For each kind, `status`, `basis`, `business_date`, `observed_at` and each
+  participant's `reason`, using the same `kis_estimate_` or `kis_daily_` prefix.
+
+Estimate values always carry `business_date_unknown` when available: the broker
+did not date them. A recent receive time does not prove the underlying estimate
+is fresh. Estimates from a different observation date or more than 180 minutes
+before the decision are hidden as `stale_observation`; callers may set a positive
+`max_age_minutes` explicitly. Dated reports retain their source business date and
+`reported_revisable` status. They are not intraday individual data or immutable
+final figures. Numeric zero remains zero; unavailable amounts remain missing.
+
+For every candle, the reader uses its exchange publication time and selects only
+observations already received by that time. The archive is read-only in strategies;
+missing archives return missing columns with reasons and do not create files.
+Historical reports first downloaded today cannot establish what a strategy knew
+on an earlier date. Backtests before collection began therefore have no historical
+point-in-time flow, even if the broker returns those historical dates today.
+
 ## Delivery and acceptance
 
 1. Record actual responses, source units, list scope, unknown timestamps and
