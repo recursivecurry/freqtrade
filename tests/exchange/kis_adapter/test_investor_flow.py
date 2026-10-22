@@ -133,10 +133,11 @@ def test_store_deduplication_revision_restart_and_clock_rollback(tmp_path, sourc
         record["observed_at"] += 1000
     assert store.save(repeated) == 0
     revision = copy.deepcopy(repeated[0])
+    revision["observed_at"] += 1000
     revision["amounts"]["foreign"] += 1
     assert store.save([revision]) == 1
     restored_value = copy.deepcopy(records[0])
-    restored_value["observed_at"] += 2000
+    restored_value["observed_at"] += 3000
     assert store.save([restored_value]) == 1
     store.close()
     store = InvestorFlowStore(path, read_only=True)
@@ -155,6 +156,34 @@ def test_store_deduplication_revision_restart_and_clock_rollback(tmp_path, sourc
     assert store.db.execute("SELECT count(*) FROM kis_investor_observations").fetchone()[0] == 4
     store.close()
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_deduplicated_receipt_clock_survives_restart_and_atomic_rollback(tmp_path):
+    path = tmp_path / "flow.sqlite"
+    original = observation(SYMBOL, "estimate", WHEN, row={"frgn_ntby_tr_pbmn": "2"})
+    later = original | {"observed_at": original["observed_at"] + 30 * 60_000}
+    changed = copy.deepcopy(original)
+    changed["amounts"]["foreign"] += 1
+    store = InvestorFlowStore(path)
+    assert store.save([original]) == 1
+    assert store.save([later]) == 0
+    store.close()
+    store = InvestorFlowStore(path)
+    with pytest.raises(ccxt.ExchangeError, match="backwards"):
+        store.save([changed | {"observed_at": original["observed_at"] + 20 * 60_000}])
+    with pytest.raises(ccxt.ExchangeError, match="one time"):
+        store.save([changed | {"observed_at": later["observed_at"]}])
+    assert store.latest(SYMBOL, "estimate", original["observed_at"] + 25 * 60_000) == original
+    with pytest.raises(ccxt.ExchangeError, match="backwards"):
+        store.save([later | {"observed_at": later["observed_at"] + 2000}, original])
+    assert store.save([changed | {"observed_at": later["observed_at"] + 1000}]) == 1
+    store.db.execute("DROP TABLE kis_investor_receipts")
+    store.db.commit()
+    store.close()
+    store = InvestorFlowStore(path)
+    with pytest.raises(ccxt.ExchangeError, match="backwards"):
+        store.save([later])
+    store.close()
 
 
 def test_strategy_join_uses_observation_time_preserves_zero_and_staleness(tmp_path):

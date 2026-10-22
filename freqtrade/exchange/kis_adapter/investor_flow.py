@@ -219,6 +219,13 @@ class InvestorFlowStore:
                 );
                 CREATE INDEX IF NOT EXISTS kis_investor_lookup
                     ON kis_investor_observations(symbol, kind, observed_at);
+                CREATE TABLE IF NOT EXISTS kis_investor_receipts (
+                    symbol TEXT NOT NULL, kind TEXT NOT NULL,
+                    received_at INTEGER NOT NULL, PRIMARY KEY(symbol, kind)
+                );
+                INSERT OR IGNORE INTO kis_investor_receipts(symbol,kind,received_at)
+                    SELECT symbol,kind,max(observed_at) FROM kis_investor_observations
+                    GROUP BY symbol,kind;
             """)
 
     def close(self):
@@ -238,13 +245,22 @@ class InvestorFlowStore:
             self.db.execute("BEGIN IMMEDIATE")
             for record in records:
                 previous = self.latest(record["symbol"], record["kind"], 2**63 - 1)
+                receipt = self.db.execute(
+                    "SELECT received_at FROM kis_investor_receipts WHERE symbol=? AND kind=?",
+                    (record["symbol"], record["kind"]),
+                ).fetchone()
+                if receipt and record["observed_at"] < receipt[0]:
+                    raise ccxt.ExchangeError("kis investor observation clock moved backwards")
+                self.db.execute(
+                    "INSERT INTO kis_investor_receipts(symbol,kind,received_at) VALUES(?,?,?) "
+                    "ON CONFLICT(symbol,kind) DO UPDATE SET received_at=excluded.received_at",
+                    (record["symbol"], record["kind"], record["observed_at"]),
+                )
                 stable = {k: v for k, v in record.items() if k != "observed_at"}
                 if previous:
-                    if record["observed_at"] < previous["observed_at"]:
-                        raise ccxt.ExchangeError("kis investor observation clock moved backwards")
                     if stable == {k: v for k, v in previous.items() if k != "observed_at"}:
                         continue
-                    if record["observed_at"] == previous["observed_at"]:
+                    if receipt and record["observed_at"] == receipt[0]:
                         raise ccxt.ExchangeError(
                             "kis conflicting investor observations at one time"
                         )

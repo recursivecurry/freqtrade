@@ -127,8 +127,9 @@ publication delay can still mean that only a prior date is available.
 
 Successful rows and failures are appended atomically. Consecutive identical
 observations keep their first observation time; an A-to-B-to-A revision retains
-all three versions. Clock rollback and different values at one timestamp fail
-instead of rewriting history. Failed polls produce explicit unavailable
+all three versions. A separate receipt clock advances even for identical polls
+and survives restarts. Clock rollback and different values at one timestamp
+fail instead of rewriting history. Failed polls produce explicit unavailable
 observations, so the strategy does not silently keep using the previous success.
 The stored payload contains source/unit/basis, receive time, observation date,
 source business date when supplied, amounts, participant-specific reasons and
