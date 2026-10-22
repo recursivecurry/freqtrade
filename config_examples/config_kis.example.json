@@ -1,0 +1,51 @@
+{
+    "$schema": "https://schema.freqtrade.io/schema.json",
+    "max_open_trades": 1,
+    "stake_currency": "KRW",
+    "stake_amount": 100000,
+    "tradable_balance_ratio": 0.99,
+    "timeframe": "1m",
+    "dry_run": true,
+    "dry_run_wallet": 1000000,
+    "db_url": "sqlite:////freqtrade/user_data/trades-dryrun.kis.sqlite",
+    "cancel_open_orders_on_exit": false,
+    "position_adjustment_enable": false,
+    "order_types": {
+        "entry": "limit",
+        "exit": "limit",
+        "stoploss": "market",
+        "stoploss_on_exchange": false
+    },
+    "order_time_in_force": {"entry": "DAY", "exit": "DAY"},
+    "unfilledtimeout": {"entry": 10, "exit": 10, "unit": "minutes"},
+    "entry_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "exit_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "exchange": {
+        "name": "kis",
+        "api_key": "",
+        "secret": "",
+        "account_id": "",
+        "uid": "",
+        "pair_whitelist": ["005930/KRW"],
+        "pair_blacklist": [],
+        "kis": {
+            "environment": "paper",
+            "sessions": {},
+            "settlement_calendar": {},
+            "costs": {}
+        }
+    },
+    "pairlists": [{"method": "StaticPairList"}],
+    "bot_name": "freqtrade-kis",
+    "initial_state": "stopped",
+    "force_entry_enable": false,
+    "internals": {"process_throttle_secs": 5}
+}

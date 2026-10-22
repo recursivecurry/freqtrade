@@ -1,0 +1,4 @@
+{
+    "dry_run": false,
+    "db_url": "sqlite:////freqtrade/user_data/trades-paper.kis.sqlite"
+}

@@ -36,6 +36,7 @@ nav:
     - Utility Sub-commands: utils.md
     - Plotting: plotting.md
     - Exchange-specific Notes: exchanges.md
+    - KIS development deployment: kis-deployment.md
     - Data Analysis:
         - Jupyter Notebooks: data-analysis.md
         - Strategy analysis: strategy_analysis_example.md
