@@ -10,6 +10,7 @@ from freqtrade.enums import RunMode
 from freqtrade.exchange.kis_adapter import KisAsync, KisSync
 from freqtrade.exchange.kis_adapter.client import KisClient
 from freqtrade.exchange.kis_adapter.trading import KisTrading
+from freqtrade.exchange.kis_adapter.validate import audit_requests, main, validate
 from freqtrade.freqtradebot import FreqtradeBot
 from freqtrade.persistence import Order, Trade, init_db
 from freqtrade.util import dt_ts
@@ -701,3 +702,122 @@ def test_paper_post_is_single_attempt_and_production_writes_are_rejected(clock):
     with pytest.raises(ccxt.PermissionDenied):
         api.post("trading/order-cash", "TTTC0012U", body)
     assert len(transport.calls) == 2
+
+
+@pytest.mark.parametrize("action", ["submit", "cancel"])
+def test_validation_mutations_require_explicit_opt_in_before_bot_init(kis_config, mocker, action):
+    constructor = mocker.patch("freqtrade.exchange.kis_adapter.validate.FreqtradeBot")
+    report = validate(kis_config, action=action)
+    assert report["status"] == "failed" and report["error"]["stage"] == "configuration"
+    assert report["broker_mutation_attempts"] == 0
+    assert not report["phase6_complete"]
+    constructor.assert_not_called()
+
+
+@pytest.fixture
+def validation_bot(paper_bot, mocker):
+    bot, _service, _broker = paper_bot
+    bot.config.setdefault("original_config", {})["db_url"] = bot.config["db_url"]
+    factory = mocker.patch("freqtrade.exchange.kis_adapter.validate.FreqtradeBot", return_value=bot)
+    cleanup = mocker.patch.object(bot, "cleanup")
+    yield paper_bot, factory
+    mocker.stop(cleanup)
+
+
+def test_validation_reports_real_engine_and_db_comparison(validation_bot):
+    (bot, _service, broker), factory = validation_bot
+    config = deepcopy(bot.config)
+    report = validate(
+        config, action="submit", allow_orders=True, side="buy", amount=10, price=10000
+    )
+    assert report["status"] == "passed", report
+    assert report["orders"][0]["filled"] == 0
+    assert all(c["passed"] for c in report["checks"])
+    broker.fill(0, 3, 30000)
+    report = validate(config, action="reconcile")
+    assert report["status"] == "passed", report
+    assert report["positions"] == {"005930": 3}
+    assert report["orders"][0]["filled"] == 3
+    assert report["synthetic_fill_count"] == 1
+    assert not report["phase6_complete"]
+    supplied = factory.call_args.args[0]
+    assert supplied["strategy"] == "KisValidationStrategy"
+    assert not supplied["cancel_open_orders_on_exit"] and "api_server" not in supplied
+
+
+def test_validation_mismatch_fails_without_inventing_success(validation_bot):
+    (bot, service, broker), _factory = validation_bot
+    service.create_order("005930/KRW", "limit", "buy", 10, 10000)
+    broker.fill(0, 3, 30000)
+    bot.recover_exchange_order_intents()
+    trade = Trade.get_open_trades()[0]
+    trade.amount = 2
+    Trade.commit()
+    report = validate(bot.config, action="reconcile")
+    assert report["status"] == "failed"
+    assert {"name": "positions_match_db", "passed": False} in report["checks"]
+
+
+def test_validation_initializes_fixed_strategy_and_cleans_up_without_canceling(
+    trading, sources, kis_config, mocker
+):
+    service, broker = trading
+    kis_config.update(db_url=service.options["dbUrl"], cancel_open_orders_on_exit=True)
+    kis_config.setdefault("original_config", {})["db_url"] = kis_config["db_url"]
+    kis_config["exchange"].update(account_id=CONFIG["accountId"], uid=CONFIG["uid"])
+    kis_config["exchange"]["kis"]["settlement_calendar"] = service.options["settlementCalendar"]
+    mocker.patch.object(KisTrading, "bind", return_value=service)
+    report = validate(kis_config)
+    assert report["status"] == "passed", report
+    assert all(c["passed"] for c in report["checks"])
+    assert report["quote"]["symbol"] == "005930/KRW"
+    assert report["broker_mutation_attempts"] == 0 and broker.rows == []
+
+
+def test_validation_transport_audit_blocks_writes_and_never_records_secrets(clock):
+    config = CONFIG | {"options": {"environment": "paper", "enablePaperOrders": True}}
+    events = []
+    with audit_requests("preflight", False, events):
+        api, transport = make_client([TOKEN], config)
+        with pytest.raises(ccxt.PermissionDenied, match="blocked"):
+            api.post(
+                "trading/order-cash",
+                "VTTC0012U",
+                {
+                    "CANO": CONFIG["accountId"],
+                    "ACNT_PRDT_CD": CONFIG["uid"],
+                    "EXCG_ID_DVSN_CD": "KRX",
+                },
+            )
+    assert len(transport.calls) == 1
+    assert events == [{"method": "POST", "path": "/oauth2/tokenP"}]
+    assert all(secret not in str(events) for secret in CONFIG.values())
+
+
+def test_validation_rejects_live_config_and_keeps_exception_text_out_of_report(kis_config, mocker):
+    kis_config["exchange"]["kis"]["environment"] = "live"
+    constructor = mocker.patch("freqtrade.exchange.kis_adapter.validate.FreqtradeBot")
+    report = validate(kis_config)
+    constructor.assert_not_called()
+    assert report["status"] == "failed" and report["requests"] == []
+    kis_config["exchange"]["kis"]["environment"] = "paper"
+    kis_config["db_url"] = "sqlite:///synthetic.sqlite"
+    kis_config.setdefault("original_config", {})["db_url"] = kis_config["db_url"]
+    constructor.side_effect = RuntimeError("test-key test-secret private account values")
+    report = validate(kis_config)
+    assert report["error"] == {"stage": "initialization", "type": "RuntimeError"}
+    assert "test-secret" not in str(report) and "private account values" not in str(report)
+
+
+def test_validation_reports_are_private_and_never_overwritten(tmp_path, mocker):
+    report = tmp_path / "report.json"
+    loader = mocker.patch("freqtrade.exchange.kis_adapter.validate.Configuration")
+    loader.side_effect = ValueError("private value")
+    args = ["--config", "synthetic.json", "--report", str(report)]
+    assert main(args) == 1
+    assert report.stat().st_mode & 0o777 == 0o600
+    assert "private value" not in report.read_text()
+    original = report.read_bytes()
+    with pytest.raises(SystemExit) as exc:
+        main(args)
+    assert exc.value.code == 2 and report.read_bytes() == original
