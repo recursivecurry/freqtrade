@@ -82,6 +82,32 @@ accuracy and live data-to-display verification remain pending. Unit tests and
 synthetic fixtures cannot complete those checks. Existing official flow stays
 available when model estimates are unavailable or disabled.
 
+## Daily model artifacts
+
+`flow_model.train_model(history, now)` uses the normalized history bundle and
+requires at least 30 complete dates (20 training, 10 evaluation by default).
+Candidate members must exist on every included date. Within each fold, rank
+members by preceding gross share activity; scale each feature by its preceding
+root-mean-square magnitude. Fit a ridge regression with no intercept and no mean
+centering, so zero cumulative inputs predict zero activity. The program feature
+is an explanatory variable, not a separate participant. Targets remain independent.
+The same target names are used by training, prediction and evaluation.
+
+The report includes participant and foreign-minus-individual metrics, chronological
+fold dates and selected members. An eligible daily report does not mark intraday
+accuracy as verified. Training history must have been received before creation;
+its latest date must be before creation's KST date and no more than seven calendar
+days old. Predictions also enforce that age limit, model expiry (seven days after
+creation), matching market/symbol/unit, complete inputs and a maximum five-minute
+input age. Long holidays may therefore leave estimates unavailable.
+
+Artifacts are immutable JSON, created exclusively with `0600` permissions. Numeric
+arrays, target definitions and availability dates are checked when loaded. A SHA-256
+identifier binds coefficients, training metadata and metrics. It detects accidental
+modification, not malicious rewriting by a trusted file owner. No pickle executes
+when loading a model. Preserve each artifact and its source history to reproduce
+predictions; later corrections create a new model identifier.
+
 ## Official references
 
 - [Member daily schema example](https://github.com/koreainvestment/open-trading-api/blob/main/examples_llm/domestic_stock/inquire_member_daily/inquire_member_daily.py)
