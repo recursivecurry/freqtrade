@@ -1264,7 +1264,7 @@ class LocalTrade:
         adj = 1.0 + (deleveraged_roi / s)
         return (adj * open_value - beta) / alpha
 
-    def recalc_trade_from_orders(self, *, is_closing: bool = False):
+    def recalc_trade_from_orders(self, *, is_closing: bool = False, include_open: bool = False):
         ZERO = FtPrecise(0.0)
         current_amount = FtPrecise(0.0)
         current_stake = FtPrecise(0.0)
@@ -1281,7 +1281,7 @@ class LocalTrade:
         # as funding fees are part of the profit
         current_funding_fee = 0.0
         for _i, o in enumerate(self.orders):
-            if o.ft_is_open or not o.filled:
+            if (o.ft_is_open and not include_open) or not o.filled:
                 continue
             current_funding_fee += o.funding_fee or 0.0
             total_funding_fees += o.funding_fee or 0.0

@@ -93,7 +93,12 @@ def validate_exchange(exchange: str) -> tuple[bool, str, str, ccxt.Exchange | No
         metadata = KisSync.describe(ex_mod)
         ex_mod.id, ex_mod.name = exchange.lower(), metadata["name"]
         ex_mod.has, ex_mod.timeframes = metadata["has"], metadata["timeframes"]
-        return True, "Local experimental adapter; dry-run only", "No futures support", ex_mod
+        return (
+            True,
+            "Local experimental dry-run/paper adapter; production writes disabled",
+            "No futures support",
+            ex_mod,
+        )
     try:
         ex_mod = getattr(ccxt.pro, exchange.lower())()
     except AttributeError:

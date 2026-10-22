@@ -55,7 +55,7 @@ class KisClient:
 
     Credentials belong to one explicitly selected environment. Tokens stay in
     memory; separate bot processes must use separate app keys or be coordinated
-    operationally. This client never sends order-changing requests.
+    operationally. Order-changing requests require explicit paper-account mode.
     """
 
     def __init__(self, config: dict) -> None:
@@ -80,6 +80,11 @@ class KisClient:
         ):
             raise ccxt.AuthenticationError("kis requires an eight-digit account and two-digit uid")
         self.environment = environment
+        self.paper_orders = options.get("enablePaperOrders", False)
+        if not isinstance(self.paper_orders, bool) or (
+            self.paper_orders and (environment != "paper" or not account)
+        ):
+            raise ccxt.PermissionDenied("kis broker writes require an explicit paper account")
         self._credentials = (api_key, secret, account, product)
         self._opener = build_opener(ProxyHandler({}), _NoRedirect())
         self._lock = threading.RLock()
@@ -99,6 +104,7 @@ class KisClient:
             if (
                 supplied != self._credentials
                 or config.get("options", {}).get("environment", "paper") != self.environment
+                or config.get("options", {}).get("enablePaperOrders", False) != self.paper_orders
             ):
                 raise ccxt.AuthenticationError("kis shared client configuration mismatch")
             self._owners += 1
@@ -108,6 +114,8 @@ class KisClient:
         with self._lock:
             self._owners -= 1
             if self._owners == 0:
+                if hasattr(self, "_trading"):
+                    self._trading.close()
                 self._closed = True
                 self._token = None
                 self._credentials = ("", "", "", "")
@@ -223,6 +231,44 @@ class KisClient:
                     if attempt:
                         raise
             raise ccxt.AuthenticationError("kis authentication failed")
+
+    def post(self, path: str, tr_id: str, body: dict) -> dict:
+        """Send one paper mutation without authentication replay or transport retries."""
+        allowed = {
+            "trading/order-cash": ("VTTC0011U", "VTTC0012U"),
+            "trading/order-rvsecncl": ("VTTC0013U",),
+        }
+        if (
+            not self.paper_orders
+            or self.environment != "paper"
+            or tr_id not in allowed.get(path, ())
+            or body.get("CANO") != self._credentials[2]
+            or body.get("ACNT_PRDT_CD") != self._credentials[3]
+            or body.get("EXCG_ID_DVSN_CD") != "KRX"
+        ):
+            raise ccxt.PermissionDenied("kis mutation is not authorized for this paper account")
+        with self._lock:
+            if self._closed:
+                raise ccxt.ExchangeNotAvailable("kis client is closed")
+            token = self._authenticate()
+            data, _ = self._http(
+                "POST",
+                "/uapi/domestic-stock/v1/" + path,
+                headers={
+                    "authorization": "Bearer " + token,
+                    "appkey": self._credentials[0],
+                    "appsecret": self._credentials[1],
+                    "tr_id": tr_id,
+                    "custtype": "P",
+                    "Content-Type": "application/json",
+                },
+                body=json.dumps(body).encode(),
+            )
+            if str(data.get("rt_cd")) != "0":
+                if "rt_cd" not in data:
+                    raise ccxt.ExchangeError("kis ambiguous mutation response")
+                raise ccxt.InvalidOrder("kis broker rejected the paper request")
+            return data
 
     def pages(
         self, path: str, tr_id: str, params: dict, max_pages: int = 100

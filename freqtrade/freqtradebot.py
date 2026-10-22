@@ -271,6 +271,7 @@ class FreqtradeBot(LoggingMixin):
         set_startup_time()
 
         self.rpc.startup_messages(self.config, self.pairlists, self.protections)
+        self.recover_exchange_order_intents()
         # Update older trades with precision and precision mode
         self.startup_backpopulate_precision()
         # Adjust stoploss if it was changed
@@ -314,6 +315,7 @@ class FreqtradeBot(LoggingMixin):
         # Check whether markets have to be reloaded and reload them when it's needed
         self.exchange.reload_markets()
 
+        self.recover_exchange_order_intents()
         self.update_trades_without_assigned_fees()
 
         # Query trades from persistence layer
@@ -569,6 +571,71 @@ class FreqtradeBot(LoggingMixin):
             trade.price_precision = self.exchange.get_precision_price(trade.pair)
             trade.contract_size = self.exchange.get_contract_size(trade.pair)
         Trade.commit()
+
+    def recover_exchange_order_intents(self):
+        for order in self.exchange.recover_order_intents():
+            pair = order["symbol"]
+            if existing := Order.order_by_id(order["id"], pair):
+                trade = Trade.session.get(Trade, existing.ft_trade_id)
+                if trade is None:
+                    raise OperationalException("Recovered order has no owned trade")
+                if self.update_trade_state(trade, order["id"], order, send_msg=False):
+                    reason = constants.CANCEL_REASON["CANCELLED_ON_EXCHANGE"]
+                    if order["side"] == trade.entry_side:
+                        self.handle_cancel_enter(trade, order, existing, reason)
+                    else:
+                        self.handle_cancel_exit(trade, order, existing, reason)
+                    Trade.commit()
+                    self.exchange.acknowledge_order_intent(order)
+                continue
+            matches = Trade.get_trades_proxy(is_open=True, pair=pair)
+            if order["side"] == "buy":
+                if matches:
+                    raise OperationalException(
+                        "Recovered entry conflicts with an existing bot trade"
+                    )
+                rate = order["average"] or order["price"] or order["info"]["intentReferencePrice"]
+                when = dt_from_ts(order["timestamp"])
+                if not rate or rate <= 0:
+                    raise OperationalException("Recovered entry has no valid reference price")
+                trade = Trade(
+                    pair=pair,
+                    base_currency=self.exchange.get_pair_base_currency(pair),
+                    stake_currency=self.config["stake_currency"],
+                    exchange=self.exchange.id,
+                    stake_amount=order["amount"] * rate,
+                    amount=0,
+                    amount_requested=order["amount"],
+                    open_rate=rate,
+                    open_rate_requested=rate,
+                    open_date=when,
+                    is_open=True,
+                    fee_open=self.exchange.estimate_fee_rate(
+                        pair, "buy", order["amount"], rate, when, 0
+                    ),
+                    fee_close=self.exchange.estimate_fee_rate(
+                        pair, "sell", order["amount"], rate, dt_now(), 0
+                    ),
+                    timeframe=timeframe_to_minutes(self.config["timeframe"]),
+                    leverage=1,
+                    trading_mode=self.trading_mode,
+                    is_short=False,
+                    precision_mode=self.exchange.precisionMode,
+                    precision_mode_price=self.exchange.precision_mode_price,
+                    amount_precision=self.exchange.get_precision_amount(pair),
+                    price_precision=self.exchange.get_precision_price(pair),
+                    contract_size=self.exchange.get_contract_size(pair),
+                    enter_tag="recovered_intent",
+                )
+            else:
+                if len(matches) != 1 or matches[0].is_short:
+                    raise OperationalException("Recovered exit has no unique owned long trade")
+                trade = matches[0]
+                trade.exit_reason = "recovered_intent"
+            trade.orders.append(Order.parse_from_ccxt_object(order, pair, order["side"]))
+            Trade.session.add(trade)
+            Trade.commit()
+            self.update_trade_state(trade, order["id"], order, send_msg=False)
 
     def startup_update_open_orders(self):
         """
@@ -2559,6 +2626,8 @@ class FreqtradeBot(LoggingMixin):
             logger.warning("Unable to fetch order %s: %s", order_id, exception)
             return False
 
+        previous_order = trade.select_order_by_order_id(order_id)
+        previous_filled = previous_order.safe_filled if previous_order else 0
         trade.update_order(order)
 
         if self.exchange.check_order_canceled_empty(order):
@@ -2571,12 +2640,16 @@ class FreqtradeBot(LoggingMixin):
 
         self.handle_order_fee(trade, order_obj, order)
 
-        trade.update_trade(order_obj, not send_msg)
+        include_open = self.exchange.get_option("include_open_fills")
+        self.exchange.update_trade_from_order(trade, order_obj, not send_msg)
+        if include_open and order_obj.status == "open" and order_obj.safe_filled != previous_filled:
+            self.wallets.update()
 
         trade = self._update_trade_after_fill(trade, order_obj, send_msg)
         Trade.commit()
 
         self.order_close_notify(trade, order_obj, stoploss_order, send_msg)
+        self.exchange.acknowledge_order_intent(order)
 
         return False
 

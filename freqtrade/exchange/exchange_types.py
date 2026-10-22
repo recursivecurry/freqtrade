@@ -34,6 +34,7 @@ class FtHas(TypedDict, total=False):
     ohlcv_fill_missing: bool
     ohlcv_align_timestamps: bool
     price_band_precision: bool
+    include_open_fills: bool
     ohlcv_require_since: bool
     # Seconds after the candle close time to assume a candle is actually closed
     ohlcv_late_candle_grace_secs: int

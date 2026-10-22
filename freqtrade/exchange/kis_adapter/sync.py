@@ -6,7 +6,9 @@ import ccxt
 
 from freqtrade.exchange.kis_adapter.client import KisClient
 from freqtrade.exchange.kis_adapter.market_data import KisMarketData
+from freqtrade.exchange.kis_adapter.orders import validate_market_order
 from freqtrade.exchange.kis_adapter.rules import round_price
+from freqtrade.exchange.kis_adapter.trading import KisTrading
 
 
 class KisSync(ccxt.Exchange):
@@ -23,6 +25,15 @@ class KisSync(ccxt.Exchange):
         self._client.acquire(config)
         self._released = False
         self.precisionMode = ccxt.TICK_SIZE
+        try:
+            self._trading = KisTrading.bind(self._client, config.get("options", {}))
+        except BaseException:
+            self._released = True
+            self._client.release()
+            self.apiKey = self.secret = ""
+            raise
+        if self._client.paper_orders:
+            self.has.update(dict.fromkeys(KisTrading.CAPABILITIES, True))
 
     def describe(self):
         """Declare only currently implemented capabilities."""
@@ -88,6 +99,49 @@ class KisSync(ccxt.Exchange):
     def price_to_precision(self, symbol: str, price):
         """Round prices using the security's current KRX price bands."""
         return round_price(price, self.market(symbol)["info"]["assetClass"])
+
+    def fetch_balance(self, params=None):
+        self._check_read(params)
+        return self._trading.fetch_balance()
+
+    def fetch_orders(self, symbol=None, since=None, limit=None, params=None):
+        self._check_read(params)
+        self._trading.validate_filters(since, limit)
+        return self._trading.fetch_orders(symbol, since, limit)
+
+    def fetch_open_orders(self, symbol=None, since=None, limit=None, params=None):
+        self._trading.validate_filters(since, limit)
+        return [o for o in self.fetch_orders(symbol, since, None, params) if o["status"] == "open"][
+            :limit
+        ]
+
+    def fetch_order(self, id, symbol=None, params=None):  # noqa: A002
+        self._check_read(params)
+        return self._trading.fetch_order(id, symbol)
+
+    def fetch_my_trades(self, symbol=None, since=None, limit=None, params=None):
+        params = dict(params or {})
+        identifier = params.pop("order", None)
+        self._check_read(params)
+        self._trading.validate_filters(since, limit)
+        return self._trading.fetch_my_trades(symbol, since, limit, identifier)
+
+    def create_order(self, symbol, type, side, amount, price=None, params=None):  # noqa: A002
+        params = dict(params or {})
+        lifetime = params.pop("timeInForce", "DAY")
+        self._check_read(params)
+        if lifetime != "DAY":
+            raise ccxt.InvalidOrder("kis requires DAY orders")
+        if not self._client.paper_orders:
+            raise ccxt.NotSupported("kis paper broker orders are not enabled")
+        self.load_markets()
+        market = self.market(symbol)
+        validate_market_order(market, type, price)
+        return self._trading.create_order(symbol, type, side, amount, price)
+
+    def cancel_order(self, id, symbol=None, params=None):  # noqa: A002
+        self._check_read(params)
+        return self._trading.cancel_order(id, symbol)
 
     def close(self, clean_instance_data=False):
         """Release this facade's reference to its shared transport."""
