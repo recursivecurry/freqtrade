@@ -11,7 +11,8 @@ amount or be presented as an executed cash amount.
 2. Train and evaluate a per-symbol ridge model with chronological splits; save
    portable JSON artifacts with training and availability dates.
 3. Archive research predictions and expose a separately labelled point-in-time
-   strategy interface; provide observation and validation commands.
+   strategy interface; provide observation commands.
+4. Validate matched intraday references and gate strategy activation on evidence.
 
 Each stage has its own PR, GPT-6 Astra medium review and approval before merge.
 Merging code does not establish intraday accuracy or authorize its production use.
@@ -107,6 +108,58 @@ identifier binds coefficients, training metadata and metrics. It detects acciden
 modification, not malicious rewriting by a trusted file owner. No pickle executes
 when loading a model. Preserve each artifact and its source history to reproduce
 predictions; later corrections create a new model identifier.
+
+## Research collection and display
+
+Use the same separate production read-only configuration as the official investor
+collector, with an explicit whitelist and verified calendar. No command starts a
+bot or permits broker mutations. Keep paths outside the repository's tracked files.
+The parent directories must exist; history and model outputs never overwrite files.
+
+```bash
+python -m freqtrade.exchange.kis_adapter.model_flow history \
+  --config user_data/kis-flow.config.private.json --symbol 005930/KRW \
+  --members 00003 00050 --since 2026-08-01 --until 2026-10-21 \
+  --output user_data/flow-history.json
+python -m freqtrade.exchange.kis_adapter.model_flow train \
+  --config user_data/kis-flow.config.private.json \
+  --history user_data/flow-history.json --output user_data/flow-model.json
+python -m freqtrade.exchange.kis_adapter.model_flow collect \
+  --config user_data/kis-flow.config.private.json --model user_data/flow-model.json \
+  --database user_data/kis-flow.sqlite --interval 300
+python -m freqtrade.exchange.kis_adapter.model_flow inspect \
+  --database user_data/kis-flow.sqlite --symbol 005930/KRW
+```
+
+Training refuses unknown calendars and active trading sessions. Collection defaults
+to one poll; continuous intervals must be at least 60 seconds and add to the time
+spent collecting, rather than promising a fixed per-symbol cadence. One process
+can load multiple distinct, allowlisted symbol models via repeated `--model`.
+A per-database model lock rejects simultaneous model collectors. Every prediction
+retains its input snapshot, receipt hashes, model ID, training date, metrics and
+elapsed collection time. Failures append null quantities and a redacted reason,
+preventing an older success from silently surviving a failed poll.
+
+Research quantities are accessible through the explicit `inspect` command, labelled
+`장중 추정 수급 · 모델 추정치`. Strategies call:
+
+```python
+dataframe = self.dp.kis_model_flow(dataframe, metadata["pair"], timeframe=self.timeframe)
+```
+
+The new `kis_model_*` namespace is independent of official `kis_estimate_*` and
+`kis_daily_*` fields. It adds participant `_shares` columns, `status`, `label`,
+`unit`, `model_id`, `business_date`, `train_end_date`, `basis`, `intraday_validation`
+and `observed_at`. All strategy quantities remain null for `research_only` records.
+Uncollected, unknown-clock, failed and stale records carry distinct statuses. The
+reader uses the KIS candle publication clock and a maximum five-minute observation
+age; a later model/record cannot rewrite an earlier decision. Missing archives are
+read-only and return missing values. The existing official reader now also labels
+its preliminary and post-close data explicitly in separate label columns.
+
+This phase does not activate numeric model inputs. Live data-to-display and actual
+intraday reference validation remain pending; the next phase supplies the evidence
+gate. No existing strategy automatically opts in to model estimates.
 
 ## Official references
 
