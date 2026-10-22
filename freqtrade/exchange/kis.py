@@ -2,7 +2,7 @@
 
 import copy
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 import ccxt
 
@@ -169,10 +169,28 @@ class Kis(Exchange):
 
     def candle_execution_time(self, timeframe: str, when: datetime) -> datetime:
         """Execute a daily broker candle at that business date's actual opening."""
-        if timeframe != "1d":
+        if timeframe != "1d" or when.astimezone(SEOUL).time() != time.min:
             return when
         session = self._api._data.session(when.astimezone(SEOUL).date())
         return session.opening.astimezone(UTC) if session else when
+
+    def candle_close_time(self, timeframe, when, now):
+        """Publish a daily signal at the following verified session's opening."""
+        if timeframe != "1d":
+            return super().candle_close_time(timeframe, when, now)
+        try:
+            if dt_ts(when) != self._daily_publication_cutoff(now):
+                return None
+            start = when.astimezone(SEOUL).date()
+            end = now.astimezone(SEOUL).date()
+            following = None
+            for index in range(1, (end - start).days + 1):
+                session = self._api._data.session(start + timedelta(days=index))
+                if session and following is None:
+                    following = session.opening
+            return following
+        except ccxt.BaseError:
+            return None
 
     def order_expired(self, pair: str, created: datetime, when: datetime) -> bool:
         """Expire a DAY order at its close, including across a restart or date rollover."""
@@ -204,6 +222,11 @@ class Kis(Exchange):
                 else session.minute_starts()
             )
             if timeframe == "5m":
+                if any(
+                    int((moment - session.opening).total_seconds()) % 300
+                    for moment in (session.auction, session.closing)
+                ):
+                    raise OperationalException("KIS five-minute session boundaries are not aligned")
                 labels = labels[::5]
             expected.update(value for value in labels if earliest <= value <= latest)
         if actual != expected:

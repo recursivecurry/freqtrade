@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from freqtrade.configuration import TimeRange
+from freqtrade.data.dataprovider import DataProvider
 from freqtrade.data.history import load_pair_history
 from freqtrade.data.history.datahandlers import get_datahandler
 from freqtrade.enums import CandleType, RunMode
@@ -23,7 +24,7 @@ from freqtrade.exchange.kis_adapter.client import KisClient
 from freqtrade.exchange.kis_adapter.costs import estimate_cost
 from freqtrade.exchange.kis_adapter.rules import SEOUL, broker_timestamp
 from freqtrade.optimize.backtesting import Backtesting
-from freqtrade.resolvers import ExchangeResolver
+from freqtrade.resolvers import ExchangeResolver, StrategyResolver
 from tests.exchange.kis_adapter.test_market_data import FrozenDateTime, load, response
 
 
@@ -339,6 +340,117 @@ def test_dataset_validation_and_daily_publication_use_verified_sessions(kis_conf
             "1d", datetime(2026, 10, 22, tzinfo=SEOUL)
         ) == datetime(2026, 10, 22, tzinfo=UTC)
     finally:
+        exchange.close()
+
+
+def test_daily_signal_freshness_spans_weekends_but_rejects_missing_sessions(
+    kis_config, sources, mocker
+):
+    kis_config["exchange"]["kis"]["sessions"].update(
+        {
+            "2026-10-15": SCHEDULE,
+            "2026-10-16": SCHEDULE,
+            "2026-10-17": None,
+            "2026-10-18": None,
+            "2026-10-19": SCHEDULE,
+        }
+    )
+    exchange = Kis(kis_config)
+    try:
+        strategy = StrategyResolver.load_strategy(kis_config)
+        strategy.dp = DataProvider(kis_config, exchange)
+        monday = datetime(2026, 10, 19, 9, 1, tzinfo=SEOUL)
+        mocker.patch("freqtrade.strategy.interface.dt_now", return_value=monday)
+        frame = pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2026-10-16T00:00:00+09:00")],
+                "enter_long": [1],
+                "exit_long": [0],
+            }
+        )
+        assert strategy.get_latest_candle("005930/KRW", "1d", frame)[0] is not None
+        assert strategy.get_entry_signal("005930/KRW", "1d", frame)[0] is not None
+        strategy.ignore_buying_expired_candle_after = 90
+        assert strategy.get_entry_signal("005930/KRW", "1d", frame)[0] is not None
+        mocker.patch("freqtrade.strategy.interface.dt_now", return_value=monday.replace(minute=2))
+        assert strategy.get_entry_signal("005930/KRW", "1d", frame)[0] is None
+        mocker.patch("freqtrade.strategy.interface.dt_now", return_value=monday)
+        old = frame.copy()
+        old["date"] = pd.to_datetime(["2026-10-15T00:00:00+09:00"])
+        assert strategy.get_latest_candle("005930/KRW", "1d", old) == (None, None)
+        exchange._api._data._sessions.pop("2026-10-18")
+        assert strategy.get_latest_candle("005930/KRW", "1d", frame) == (None, None)
+    finally:
+        exchange.close()
+
+
+@pytest.mark.parametrize("forced, detail_minutes", [(False, 0), (True, 0), (False, 5)])
+def test_daily_backtest_fills_close_and_callbacks_share_the_session_clock(
+    kis_config, sources, mocker, forced, detail_minutes
+):
+    kis_config.update(
+        runmode=RunMode.BACKTEST,
+        timeframe="1d",
+        stake_amount=500000,
+        dry_run_wallet=1000000,
+        max_open_trades=1,
+    )
+    exchange = Kis(kis_config)
+    try:
+        backtest = Backtesting(kis_config, exchange=exchange)
+        backtest._set_strategy(backtest.strategylist[0])
+        filled = mocker.patch.object(backtest.strategy, "order_filled")
+        row = [
+            pd.Timestamp("2026-10-21T00:00:00+09:00"),
+            224000,
+            225000,
+            222000,
+            224000,
+            1,
+            0,
+            0,
+            0,
+            "",
+            "",
+        ]
+        trade = backtest._enter_trade("005930/KRW", row, "long")
+        exit_row = [pd.Timestamp("2026-10-22T00:00:00+09:00"), *row[1:]]
+        expected = datetime(2026, 10, 22, tzinfo=UTC) + timedelta(minutes=detail_minutes)
+        if detail_minutes:
+            exit_row[0] = pd.Timestamp(expected)
+        if forced:
+            backtest.handle_left_open({"005930/KRW": [trade]}, {"005930/KRW": [exit_row]})
+        else:
+            backtest._exit_trade(trade, exit_row, 224000, 2, "validation")
+            backtest._process_exit_order(
+                trade.orders[-1], trade, exit_row[0].to_pydatetime(), exit_row, "005930/KRW"
+            )
+        assert trade.close_date_utc == expected
+        assert trade.orders[-1].order_filled_date == expected
+        assert trade.orders[-1].order_date == expected
+        assert filled.call_args.kwargs["current_time"] == expected
+        detail = expected + timedelta(minutes=5)
+        assert exchange.candle_execution_time("1d", detail) == detail
+    finally:
+        Backtesting.cleanup()
+        exchange.close()
+
+
+def test_backtest_detail_data_rejects_a_missing_trading_minute(kis_config, sources, mocker):
+    kis_config.update(runmode=RunMode.BACKTEST, timeframe="5m", timeframe_detail="1m")
+    exchange = Kis(kis_config)
+    try:
+        backtest = Backtesting(kis_config, exchange=exchange)
+        frame = pd.DataFrame(
+            {"date": pd.to_datetime(["2026-10-22T00:00:00Z", "2026-10-22T00:02:00Z"])}
+        )
+        mocker.patch(
+            "freqtrade.optimize.backtesting.history.load_data", return_value={"005930/KRW": frame}
+        )
+        with pytest.raises(OperationalException, match="session gap"):
+            backtest._load_bt_data_detail()
+    finally:
+        Backtesting.cleanup()
         exchange.close()
 
 

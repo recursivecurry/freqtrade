@@ -417,6 +417,8 @@ class Backtesting:
                 data_format=self.config["dataformat_ohlcv"],
                 candle_type=self.config.get("candle_type_def", CandleType.SPOT),
             )
+            for pair, dataframe in self.detail_data.items():
+                self.exchange.validate_candle_data(pair, self.timeframe_detail, dataframe)
         else:
             self.detail_data = {}
         if self.trading_mode == TradingMode.FUTURES:
@@ -812,6 +814,7 @@ class Backtesting:
         Check if an order is open and if it should've filled.
         :return: True if the order filled.
         """
+        current_date = self.exchange.candle_execution_time(self.timeframe, current_date)
         if order and self._get_order_filled(order.ft_price, row):
             order.close_bt_order(current_date, trade)
             self._run_funding_fees(trade, current_date, force=True)
@@ -845,6 +848,7 @@ class Backtesting:
         """
         Takes an exit order and processes it, potentially closing the trade.
         """
+        current_time = self.exchange.candle_execution_time(self.timeframe, current_time)
         if self._try_close_open_order(order, trade, current_time, row):
             sub_trade = order.safe_amount_after_fee != trade.amount
             if sub_trade:
@@ -1587,6 +1591,7 @@ class Backtesting:
 
         Backtesting processing for one candle/pair.
         """
+        current_time = self.exchange.candle_execution_time(self.timeframe, current_time)
         exiting_dir: LongShort | None = None
         if not self._position_stacking and len(LocalTrade.bt_trades_open_pp[pair]) > 0:
             # position_stacking not supported for now.
@@ -1608,7 +1613,7 @@ class Backtesting:
             can_enter
             and trade_dir is not None
             and (self._position_stacking or len(LocalTrade.bt_trades_open_pp[pair]) == 0)
-            and not PairLocks.is_pair_locked(pair, row[DATE_IDX], trade_dir)
+            and not PairLocks.is_pair_locked(pair, current_time, trade_dir)
         ):
             if self.trade_slot_available(LocalTrade.bt_open_open_trade_count):
                 trade = self._enter_trade(pair, row, trade_dir)

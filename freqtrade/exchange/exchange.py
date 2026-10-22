@@ -1235,6 +1235,10 @@ class Exchange(LoggingMixin):
         """Return the execution time represented by a backtest candle."""
         return when
 
+    def candle_close_time(self, timeframe: str, when: datetime, now: datetime) -> datetime | None:
+        """Return when a candle's signal becomes available."""
+        return when + timedelta(seconds=timeframe_to_seconds(timeframe))
+
     def order_expired(self, pair: str, created: datetime, when: datetime) -> bool:
         """Leave expiration to the exchange unless its order lifetime is session-bound."""
         return False

@@ -7,7 +7,7 @@ Common Interface for bot and strategy to access data.
 
 import logging
 from collections import deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pandas import DataFrame, Timedelta, Timestamp, to_timedelta
@@ -69,6 +69,12 @@ class DataProvider:
 
         self.producers = self._config.get("external_message_consumer", {}).get("producers", [])
         self.external_data_enabled = len(self.producers) > 0
+
+    def candle_close_time(self, timeframe: str, when: datetime, now: datetime) -> datetime | None:
+        """Use the exchange's signal clock when session calendars affect publication."""
+        if self._exchange:
+            return self._exchange.candle_close_time(timeframe, when, now)
+        return when + timedelta(seconds=timeframe_to_seconds(timeframe))
 
     def _set_dataframe_max_index(self, pair: str, limit_index: int):
         """

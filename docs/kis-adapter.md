@@ -453,6 +453,11 @@ bars rather than elapsed minutes. Imported backtest datasets must match the veri
 session labels across their covered interval; an intraday gap stops the run. Daily
 backtests execute at the verified opening. Runtime daily signals publish at the next
 verified opening, avoiding consumption of the new daily signal before trading starts.
+Daily signal freshness and optional entry-signal expiry use that publication time,
+so a verified weekend or holiday does not make the previous session's bar stale.
+An omitted intervening calendar date or missing business-day candle still blocks it.
+Backtest fills, trade closure, callbacks and protections share the execution clock;
+intraday detail timestamps keep their actual time.
 An intraday paper strategy cannot obtain warm-up bars from a previous paper date.
 
 `exchange.kis.costs` maps each symbol to dated rules with `from`, `through`, `source`,
