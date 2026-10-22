@@ -574,7 +574,10 @@ trading.
 
 The validation module runs one explicit operation against the paper server and
 compares normalized orders, whole-share positions and estimated costs with the
-Freqtrade DB. It uses the bundled no-signal `KisValidationStrategy`, never starts a
+Freqtrade DB in both directions, including DB orders absent from the canonical
+ledger. An inconsistent DB blocks mutations before transmission, and additional
+buys into an existing same-symbol Trade are rejected. It uses the bundled
+no-signal `KisValidationStrategy`, never starts a
 strategy loop, disables RPC/message integrations, and does not cancel on shutdown.
 Stop any KIS bot using the same account before running it. The existing Kraken bot
 can continue using its separate database and account.

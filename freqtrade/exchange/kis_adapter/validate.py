@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import ccxt
+from sqlalchemy import select
 
 import freqtrade
 from freqtrade.configuration import Configuration
@@ -96,8 +97,23 @@ def compare_database(bot):
     }
     checks.append({"name": "positions_match_db", "passed": held == broker})
     indexed = {order["id"]: order for order in canonical}
+    checks.append(
+        {
+            "name": "db_orders_have_ledger",
+            "passed": all(
+                order.order_id in indexed for order in Order.session.scalars(select(Order))
+            ),
+        }
+    )
     for trade in Trade.get_trades_proxy():
         owned = [indexed[o.order_id] for o in trade.orders if o.order_id in indexed]
+        checks.append(
+            {
+                "name": "trade_has_owned_orders",
+                "trade": trade.id,
+                "passed": trade.exchange == "kis" and bool(owned),
+            }
+        )
         for side, suffix in (("buy", "open"), ("sell", "close")):
             matching = [o for o in owned if o["side"] == side and o["filled"]]
             if matching:
@@ -120,6 +136,36 @@ def compare_database(bot):
         "positions": broker,
         "cost_status": "estimated",
     }
+
+
+def perform_action(bot, action, symbol, side, kind, amount, price, order_id):
+    if action == "preflight":
+        ticker = bot.exchange._api.fetch_ticker(symbol)
+        return {"quote": {"symbol": symbol, "last": ticker["last"]}}
+    if action == "submit":
+        trades = Trade.get_trades_proxy(is_open=True, pair=symbol)
+        if side == "buy" and trades:
+            raise ccxt.InvalidOrder("paper validation does not support additional entries")
+        if side == "sell" and (len(trades) != 1 or amount > trades[0].amount):
+            raise ccxt.InvalidOrder("paper validation requires one sufficient owned position")
+        reference = price
+        if reference is None:
+            book = bot.exchange._api.fetch_order_book(symbol, 1)
+            reference = book["asks" if side == "buy" else "bids"][0][0]
+        order = bot.exchange.create_order(
+            pair=symbol,
+            ordertype=kind,
+            side=side,
+            amount=amount,
+            rate=reference,
+            leverage=1,
+            time_in_force="DAY",
+        )
+        return {"submitted_order": order["id"]}
+    if action == "cancel":
+        order = bot.exchange.cancel_order(order_id, symbol)
+        return {"cancel_response_status": order["status"]}
+    return {}
 
 
 def validate(
@@ -185,27 +231,13 @@ def validate(
             bot = FreqtradeBot(config)
             stage = "recovery"
             bot.recover_exchange_order_intents()
+            if action in ("submit", "cancel"):
+                stage = "before_mutation"
+                report.update(compare_database(bot))
+                if not all(check["passed"] for check in report["checks"]):
+                    raise ccxt.ExchangeError("paper validation database is inconsistent")
             stage = action
-            if action == "preflight":
-                ticker = bot.exchange._api.fetch_ticker(symbol)
-                report["quote"] = {"symbol": symbol, "last": ticker["last"]}
-            elif action == "submit":
-                reference = price
-                if reference is None:
-                    book = bot.exchange._api.fetch_order_book(symbol, 1)
-                    reference = book["asks" if side == "buy" else "bids"][0][0]
-                order = bot.exchange.create_order(
-                    pair=symbol,
-                    ordertype=kind,
-                    side=side,
-                    amount=amount,
-                    rate=reference,
-                    leverage=1,
-                    time_in_force="DAY",
-                )
-                report["submitted_order"] = order["id"]
-            elif action == "cancel":
-                bot.exchange.cancel_order(order_id, symbol)
+            report.update(perform_action(bot, action, symbol, side, kind, amount, price, order_id))
             stage = "database_comparison"
             report.update(compare_database(bot))
             report["status"] = "passed" if all(c["passed"] for c in report["checks"]) else "failed"

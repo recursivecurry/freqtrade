@@ -758,6 +758,37 @@ def test_validation_mismatch_fails_without_inventing_success(validation_bot):
     assert {"name": "positions_match_db", "passed": False} in report["checks"]
 
 
+def test_validation_second_entry_is_rejected_before_broker_submission(validation_bot):
+    (bot, _service, broker), _factory = validation_bot
+    config = deepcopy(bot.config)
+    assert (
+        validate(config, action="submit", allow_orders=True, side="buy", price=10000)["status"]
+        == "passed"
+    )
+    broker.fill(0, 1, 10000)
+    assert validate(config, action="reconcile")["status"] == "passed"
+    report = validate(config, action="submit", allow_orders=True, side="buy", price=10000)
+    assert report["error"] == {"stage": "submit", "type": "InvalidOrder"}
+    assert len(broker.rows) == 1
+
+
+def test_validation_extra_db_order_fails_reconciliation_and_blocks_submission(validation_bot):
+    (bot, service, broker), _factory = validation_bot
+    config = deepcopy(bot.config)
+    first = validate(config, action="submit", allow_orders=True, side="buy", price=10000)
+    assert first["status"] == "passed"
+    trade = Trade.get_open_trades()[0]
+    unknown = service.store.orders()[0] | {"id": "synthetic-unknown-order"}
+    trade.orders.append(Order.parse_from_ccxt_object(unknown, trade.pair, "buy"))
+    Trade.commit()
+    report = validate(config, action="reconcile")
+    assert report["status"] == "failed"
+    assert {"name": "db_orders_have_ledger", "passed": False} in report["checks"]
+    report = validate(config, action="submit", allow_orders=True, side="buy", price=10000)
+    assert report["error"] == {"stage": "before_mutation", "type": "ExchangeError"}
+    assert len(broker.rows) == 1
+
+
 def test_validation_initializes_fixed_strategy_and_cleans_up_without_canceling(
     trading, sources, kis_config, mocker
 ):
