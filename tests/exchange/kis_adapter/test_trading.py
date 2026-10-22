@@ -163,7 +163,7 @@ def trading(tmp_path, mocker):
     service.close()
 
 
-def import_order(order):
+def import_order(order, service):
     trade = Trade(
         pair=order["symbol"],
         exchange="kis",
@@ -176,6 +176,7 @@ def import_order(order):
     trade.orders.append(Order.parse_from_ccxt_object(order, order["symbol"], order["side"]))
     Trade.session.add(trade)
     Trade.commit()
+    service.store.mark_imported(order["id"])
 
 
 def test_clean_cash_and_working_reservation_are_not_settlement_balances(trading):
@@ -318,7 +319,7 @@ def test_cash_transfer_blocks_orders_but_owned_order_queries_continue(trading):
 def test_cancel_ack_is_not_terminal_and_late_fills_are_retained(trading):
     service, broker = trading
     order = service.create_order("005930/KRW", "limit", "buy", 10, 10000)
-    import_order(order)
+    import_order(order, service)
     broker.fill(0, 3, 30000)
     broker.cancel_immediate = False
     pending = service.cancel_order(order["id"])
@@ -338,7 +339,7 @@ def test_cancel_ack_is_not_terminal_and_late_fills_are_retained(trading):
 def test_lost_cancel_response_is_reconciled_without_another_cancel(trading):
     service, broker = trading
     order = service.create_order("005930/KRW", "limit", "buy", 10, 10000)
-    import_order(order)
+    import_order(order, service)
     broker.fill(0, 3, 30000)
     broker.timeout = True
     with pytest.raises(ccxt.RequestTimeout):
@@ -471,6 +472,67 @@ def test_engine_imports_a_lost_entry_once_and_preserves_partial_fills(paper_bot,
     assert len([c for c in broker.calls if c[0].endswith("order-cash")]) == 1
 
 
+def test_terminal_zero_fill_entry_has_history_without_an_open_trade(paper_bot):
+    bot, service, broker = paper_bot
+    broker.timeout = True
+    with pytest.raises(ccxt.RequestTimeout):
+        service.create_order("005930/KRW", "limit", "buy", 10, 10000)
+    broker.rows[0].update(rmn_qty="0", cnc_cfrm_qty="10")
+    bot.recover_exchange_order_intents()
+    bot.recover_exchange_order_intents()
+    assert Trade.get_open_trades() == []
+    assert service.store.orders()[0]["status"] == "canceled"
+    assert service.store.intents()[0]["state"] == "resolved"
+    assert service.store.unimported() == []
+
+
+def test_normally_canceled_empty_entry_is_not_resurrected(paper_bot):
+    bot, service, broker = paper_bot
+    order = service.create_order("005930/KRW", "limit", "buy", 10, 10000)
+    bot.recover_exchange_order_intents()
+    trade = Trade.get_open_trades()[0]
+    broker.rows[0].update(rmn_qty="0", cnc_cfrm_qty="10")
+    canceled = service.fetch_order(order["id"])
+    assert bot.update_trade_state(trade, order["id"], canceled, send_msg=False)
+    bot.handle_cancel_enter(trade, canceled, trade.orders[0], "synthetic cancellation")
+    assert Trade.get_open_trades() == []
+    bot.recover_exchange_order_intents()
+    assert Trade.get_open_trades() == []
+    assert service.store.orders()[0]["status"] == "canceled"
+
+
+@pytest.mark.parametrize("boundary", ["before_accounting", "before_acknowledgement"])
+def test_interrupted_terminal_exit_import_replays_accounting(paper_bot, mocker, boundary):
+    bot, service, broker = paper_bot
+    service.create_order("005930/KRW", "limit", "buy", 10, 10000)
+    broker.fill(0, 10, 100000)
+    bot.recover_exchange_order_intents()
+    trade = Trade.get_open_trades()[0]
+    sell = service.create_order("005930/KRW", "limit", "sell", 10, 11000)
+    broker.fill(1, 10, 110000)
+    target, name = (
+        (bot, "update_trade_state")
+        if boundary == "before_accounting"
+        else (bot.exchange, "acknowledge_order_intent")
+    )
+    interrupted = mocker.patch.object(
+        target, name, side_effect=RuntimeError("synthetic interruption")
+    )
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        bot.recover_exchange_order_intents()
+    assert Order.order_by_id(sell["id"]) is not None
+    assert service.store.unimported()[0]["id"] == sell["id"]
+    mocker.stop(interrupted)
+    Trade.session.expire_all()
+    bot.recover_exchange_order_intents()
+    bot.recover_exchange_order_intents()
+    Trade.session.refresh(trade)
+    assert not trade.is_open and trade.close_profit_abs == 9570
+    assert service.store.unimported() == []
+    assert len(service.fetch_my_trades()) == 2
+    assert len([c for c in broker.calls if c[0].endswith("order-cash")]) == 2
+
+
 def test_partial_exit_cumulative_updates_do_not_close_early_or_double_charge(paper_bot):
     bot, service, broker = paper_bot
     service.create_order("005930/KRW", "limit", "buy", 10, 10000)
@@ -508,11 +570,11 @@ def test_partial_exit_cumulative_updates_do_not_close_early_or_double_charge(pap
 def test_unsettled_sale_cash_is_held_until_calendar_and_broker_agree(trading, mocker):
     service, broker = trading
     buy = service.create_order("005930/KRW", "limit", "buy", 10, 10000)
-    import_order(buy)
+    import_order(buy, service)
     broker.fill(0, 10, 100000)
     service.fetch_orders()
     sell = service.create_order("005930/KRW", "limit", "sell", 10, 10000)
-    import_order(sell)
+    import_order(sell, service)
     broker.fill(1, 10, 100000)
     wallet = service.fetch_balance()
     assert wallet["KRW"] == {"total": 999600, "free": 899900, "used": 99700}

@@ -523,8 +523,11 @@ quantity, limit price and the bounded submission-time interval. No match stays
 blocked; multiple matches require operator reconciliation. This relies on the
 dedicated-account restriction because the broker provides no client idempotency
 key. Restart recovery imports owned orders missing from the Freqtrade DB before
-new strategy activity. Fully or partially filled orders update positions and
-estimated costs from cumulative totals without replaying earlier fills.
+new strategy activity. Import completion is acknowledged only after the Freqtrade
+accounting commit; an interruption replays unfinished accounting even when the
+Order row already exists. Terminal zero-fill entries retain canonical history
+without creating an economic Trade. Fully or partially filled orders update
+positions and estimated costs from cumulative totals without replaying earlier fills.
 
 Cancellation first queries eligibility and validates the original routing branch
 and remaining whole quantity. The implementation uses the documented `TTTC0084R`
@@ -556,6 +559,8 @@ responses, partial fills, cancellation races, atomic watermarks, settlement hold
 external activity and Freqtrade DB import/accounting. These checks do not establish
 real paper account compatibility. On 2026-10-22 the collector's three profiles
 authenticated and read paper quotes, but all three paper balance probes failed.
+A subsequent read-only retry returned `EGW02007`, explicitly stating that the app
+key was not a paper-trading key. A separate paper key/account binding is required.
 No broker order/cancel request was sent. Phase 6 must verify private endpoint
 availability, real paper fills/cancellations and DB reconciliation with a working
 paper-account binding before this adapter can be described as validated for paper

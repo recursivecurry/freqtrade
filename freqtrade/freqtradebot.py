@@ -575,7 +575,11 @@ class FreqtradeBot(LoggingMixin):
     def recover_exchange_order_intents(self):
         for order in self.exchange.recover_order_intents():
             pair = order["symbol"]
-            if Order.order_by_id(order["id"], pair):
+            if existing := Order.order_by_id(order["id"], pair):
+                trade = Trade.session.get(Trade, existing.ft_trade_id)
+                if trade is None:
+                    raise OperationalException("Recovered order has no owned trade")
+                self.update_trade_state(trade, order["id"], order, send_msg=False)
                 continue
             matches = Trade.get_trades_proxy(is_open=True, pair=pair)
             if order["side"] == "buy":
@@ -2638,6 +2642,7 @@ class FreqtradeBot(LoggingMixin):
         Trade.commit()
 
         self.order_close_notify(trade, order_obj, stoploss_order, send_msg)
+        self.exchange.acknowledge_order_intent(order_id)
 
         return False
 

@@ -52,7 +52,8 @@ class KisStore:
                     symbol TEXT NOT NULL, side TEXT NOT NULL, order_type TEXT NOT NULL,
                     amount INTEGER NOT NULL, price REAL, reserved REAL NOT NULL,
                     requested_at INTEGER NOT NULL, state TEXT NOT NULL, order_id TEXT,
-                    reference_price REAL, settlement_date TEXT
+                    reference_price REAL, settlement_date TEXT,
+                    imported INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS kis_observations (
                     order_id TEXT PRIMARY KEY, scope TEXT NOT NULL, observed_at INTEGER NOT NULL,
@@ -158,7 +159,7 @@ class KisStore:
             if self.db.execute("SELECT 1 FROM kis_intents WHERE state='unknown'").fetchone():
                 raise ccxt.ExchangeError("kis has an unresolved request; never resend it")
             self.db.execute(
-                "INSERT INTO kis_intents VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO kis_intents VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     identifier,
                     self.scope,
@@ -174,6 +175,7 @@ class KisStore:
                     order,
                     reference_price if reference_price is not None else price,
                     settlement_date,
+                    0,
                 ),
             )
         return identifier
@@ -296,15 +298,21 @@ class KisStore:
         result = []
         for intent in self.intents():
             identifier = intent["order_id"]
-            if intent["kind"] != "create" or identifier not in orders:
+            if intent["kind"] != "create" or identifier not in orders or intent["imported"]:
                 continue
-            if not self.db.execute(
-                "SELECT 1 FROM orders WHERE order_id=?", (identifier,)
-            ).fetchone():
-                order = orders[identifier]
-                order["info"]["intentReferencePrice"] = intent["reference_price"]
-                result.append(order)
+            order = orders[identifier]
+            if order["status"] != "open" and not order["filled"]:
+                continue
+            order["info"]["intentReferencePrice"] = intent["reference_price"]
+            result.append(order)
         return result
+
+    def mark_imported(self, identifier):
+        with self.transaction():
+            self.db.execute(
+                "UPDATE kis_intents SET imported=1 WHERE scope=? AND kind='create' AND order_id=?",
+                (self.scope, identifier),
+            )
 
     def trades(self, symbol=None, since=None, limit=None, order=None):
         block = self._value("kis_reconciliation_block")
