@@ -8,6 +8,7 @@ Common Interface for bot and strategy to access data.
 import logging
 from collections import deque
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from pandas import DataFrame, Timedelta, Timestamp, to_timedelta
@@ -80,6 +81,27 @@ class DataProvider:
         if self._exchange:
             return self._exchange.candle_publication_time(timeframe, when)
         return when + timedelta(seconds=timeframe_to_seconds(timeframe))
+
+    def kis_investor_flow(
+        self, dataframe: DataFrame, pair: str, timeframe=None, max_age_minutes=180
+    ):
+        if self._config.get("exchange", {}).get("name") != "kis" or not self._exchange:
+            raise OperationalException("KIS investor data requires the KIS exchange clock")
+        from freqtrade.exchange.kis_adapter.investor_flow import enrich_investor_flow
+
+        path = (
+            self._config["exchange"]
+            .get("kis", {})
+            .get("flow_database", Path(self._config["user_data_dir"]) / "kis-flow.sqlite")
+        )
+        return enrich_investor_flow(
+            dataframe,
+            pair,
+            timeframe or self._default_timeframe,
+            path,
+            self.candle_publication_time,
+            max_age_minutes,
+        )
 
     def _set_dataframe_max_index(self, pair: str, limit_index: int):
         """

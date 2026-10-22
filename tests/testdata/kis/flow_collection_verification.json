@@ -1,0 +1,97 @@
+{
+  "started_at": "2026-10-22T14:36:31.318739+00:00",
+  "finished_at": "2026-10-22T14:36:35.827241+00:00",
+  "environment": "live_read_only",
+  "exit_code": 0,
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/oauth2/tokenP"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/foreign-institution-total"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/foreign-institution-total"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily"
+    }
+  ],
+  "broker_mutations": 0,
+  "intraday_updates_observed": false,
+  "paper_orders_verified": false,
+  "observations": [
+    {
+      "symbol": "028050/KRW",
+      "kind": "estimate",
+      "business_date": null,
+      "source": "FHPTJ04400000",
+      "source_unit": "million_KRW",
+      "basis": "broker_quantity_times_current_price",
+      "availability": "business_date_unknown",
+      "amounts": {
+        "foreign": 79382000000,
+        "institution": 30350000000,
+        "individual": null
+      },
+      "observed_at": 1792679692171
+    },
+    {
+      "symbol": "028050/KRW",
+      "kind": "daily",
+      "business_date": "2026-10-22",
+      "source": "FHPTJ04160001",
+      "source_unit": "million_KRW",
+      "basis": "broker_reported_net_amount",
+      "availability": "reported_revisable",
+      "amounts": {
+        "foreign": 126797000000,
+        "institution": 89411000000,
+        "individual": -215985000000
+      },
+      "observed_at": 1792679693250
+    },
+    {
+      "symbol": "005930/KRW",
+      "kind": "estimate",
+      "business_date": null,
+      "source": "FHPTJ04400000",
+      "source_unit": "million_KRW",
+      "basis": "broker_quantity_times_current_price",
+      "availability": "business_date_unknown",
+      "amounts": {
+        "foreign": -238524000000,
+        "institution": -87945000000,
+        "individual": null
+      },
+      "observed_at": 1792679692171
+    },
+    {
+      "symbol": "005930/KRW",
+      "kind": "daily",
+      "business_date": "2026-10-22",
+      "source": "FHPTJ04160001",
+      "source_unit": "million_KRW",
+      "basis": "broker_reported_net_amount",
+      "availability": "reported_revisable",
+      "amounts": {
+        "foreign": -127324000000,
+        "institution": -87296000000,
+        "individual": 212488000000
+      },
+      "observed_at": 1792679694351
+    }
+  ],
+  "source_hashes": {
+    "freqtrade/exchange/kis_adapter/investor_flow.py": "deb08a955f39c53df03206aa961893c991682b972e12c6b3f859369740532148",
+    "freqtrade/data/dataprovider.py": "0645deb2a4425639079993cebebc1d9cfa4f3bbd087b0b75cc0d94988817a6f2"
+  }
+}
