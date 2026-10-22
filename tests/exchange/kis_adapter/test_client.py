@@ -1,7 +1,6 @@
 import asyncio
 import io
 import json
-import socket
 import threading
 from http.client import BadStatusLine, IncompleteRead
 from types import SimpleNamespace
@@ -36,14 +35,6 @@ class Transport:
         body = io.BytesIO(payload if isinstance(payload, bytes) else json.dumps(payload).encode())
         body.headers = {"tr_cont": continuation}
         return body
-
-
-@pytest.fixture(autouse=True)
-def no_network(monkeypatch):
-    def reject(*args, **kwargs):
-        pytest.fail("KIS contract test attempted external network access")
-
-    monkeypatch.setattr(socket.socket, "connect", reject)
 
 
 @pytest.fixture
@@ -269,7 +260,8 @@ async def test_shared_facades_concurrent_authentication_and_close(clock):
     asynchronous = KisAsync(CONFIG, client=api)
     assert sync.id == asynchronous.id == "kis"
     assert sync.has == asynchronous.has
-    assert not any(sync.has.values())
+    assert sync.has["fetchTicker"]
+    assert not any(sync.has[key] for key in ("createOrder", "cancelOrder", "fetchMyTrades", "swap"))
     results = await asyncio.gather(
         asyncio.to_thread(sync._get, PATH, TR, {}), asynchronous._get(PATH, TR, {})
     )

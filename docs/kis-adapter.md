@@ -62,7 +62,9 @@ different paper page sizes; do not assume one page is complete.
 
 ### Markets and quotes
 
-`005930/KRW` maps to KIS code `005930`, preserving leading zeroes. Market metadata
+`005930/KRW` maps to KIS code `005930`, preserving leading zeroes. The current
+masters also contain alphanumeric codes such as `0000D0`; retain them verbatim.
+Market metadata
 uses CCXT's spot representation for engine compatibility and retains the actual
 equity/ETF classification in `info`. Master data must identify the asset class,
 venue, trading restrictions and quantity/price rules. A six-digit code alone does
@@ -102,6 +104,71 @@ entry with `opnd_yn=Y` is not by itself evidence of the day's opening/closing ti
 Determine closing-auction bar handling and daily-candle anchoring before enabling
 the corresponding timeframe. Historical corporate-action consistency and data
 coverage must be recorded; neither is guaranteed by an API response being successful.
+
+### Implemented market-data behavior
+
+The daily KIS KOSPI/KOSDAQ masters supply security groups `ST` (stocks) and `EF`
+(ETFs). Other groups are excluded. Halted, liquidation and administrative securities,
+and securities with a quantity unit other than one, are inactive. This is master
+metadata, not proof of current account permission to trade. Archives are downloaded
+with TLS verification, redirects disabled and size limits; raw master bytes are
+cached by board/KST date. No sample code that disables TLS verification is reused.
+
+Limit-price rounding uses the current
+[KRX stock and ETF tick table](https://regulation.krx.co.kr/contents/RGL/03/03010100/RGL03010100T3.jsp).
+Stocks use price bands; ETFs use one KRW below 2,000 and five KRW at or above it.
+Whole-share precision uses CCXT's existing helpers. Freqtrade's own precision paths
+still need the phase-4 integration; client helpers alone do not establish engine support.
+
+`fetch_ticker` combines session statistics with a separate order-book request.
+Each observation has its own receive time in `info`; neither is presented as an
+exchange timestamp or an atomic combined snapshot. The order book validates all
+ten levels before applying the requested limit. Unsupported request parameters
+fail rather than changing the fixed KRX route.
+
+For candle reads, `options.sessions` is a required date-keyed, independently
+verified calendar. An open date contains `open`, `auction`, `close` (`HH:MM`, KST)
+and a nonempty `source`; a verified closed date contains `null`. There is no
+weekday-to-session fallback. Unknown dates fail before their history is queried.
+For example, an operator-verified normal session has `09:00`, `15:20`, `15:30`.
+Exceptional sessions must specify their actual boundaries. Supplying this mapping
+does not itself verify its source or freshness; operational refresh and order-time
+checks belong to phase 4. The holiday endpoint alone cannot supply these hours.
+
+Observed production snapshots on 2026-10-22 show the `09:00` minute changing before
+`09:01`, followed by a separate `09:01` minute. Intraday labels are therefore start
+times. Four pages for 2026-10-21 contain 380 continuous-session minutes through
+`15:19` and one separate `15:30` closing-auction bar. The parser requires every
+completed continuous minute; an absent minute is an error, including for illiquid
+securities where the API omits zero-trade minutes. It does not synthesize bars.
+
+Five-minute bars contain five complete continuous minutes aligned to the session
+opening. The closing auction remains a separate, short bar labelled at the close;
+it is available only five minutes after that label. No bars are generated for the
+ten-minute closing auction collection interval. Sessions whose boundaries cannot
+align to five minutes reject `5m`. One-minute closing bars become available one
+minute after their label. Current unfinished bars never reach the caller.
+
+Daily bars use unadjusted prices (`FID_ORG_ADJ_PRC=1`), labelled at midnight KST.
+The current KST date is always excluded, even after the regular close. The observed
+broker daily volume differs from the sum of regular-session minutes; native daily
+volume is retained and must not be described as regular-session-only volume.
+Past minute days must match the unadjusted daily opening/closing prices and remain
+inside its high/low range before caching. Corporate-action flags or a nonzero
+split/adjustment rate reject the day pending reconciliation. This gate detects
+inconsistent price bases; it does not implement split/dividend accounting.
+
+History is bounded to the latest 365 calendar days. Minute pagination moves to the
+previous minute; daily pagination moves to the previous date. Failed pages,
+conflicting duplicates, missing completed bars and calendar contradictions fail
+the whole call. `since` selects the first matching bars, while an omitted `since`
+selects the latest `limit`; insufficient configured history for the latter fails.
+Past verified minute days have a bounded in-memory cache; returned bars are copies.
+
+Production uses the dated intraday endpoint. Paper mode uses the documented
+today-only endpoint and rejects past-day intraday requests; no paper historical
+TR ID is guessed. Actual paper-server availability remains for phase 6. These
+public-data capabilities do not enable balance, orders or synthetic fills.
 
 ### Balances and orders
 
@@ -310,8 +377,8 @@ business errors remain `ExchangeError` until their codes are verified.
 
 The FK100/NK100 page reader retains continuation headers/cursors and fails on a
 missing cursor, repeated cursor, failed page or page limit. It never returns a
-successful partial list. Domain-specific parsing and method capabilities arrive
-in later phases; the foundation advertises no broker methods yet.
+successful partial list. Public market-data capabilities are now implemented;
+balances, broker orders and synthetic fills remain disabled.
 
 Each facade releases its reference on `close()`; the final release discards shared
 credentials and the token. HTTP responses are closed after each request. Cancelling
@@ -326,7 +393,15 @@ cleanup. No KIS order or paper-server validation is established by these tests.
 captured fixture. `ticker_005930.json` is an actual authorized production **quote**
 response with no account information or credentials. It establishes quote-field
 shape only. It is not a simulated fill, a paper-server response or a validation of
-the adapter. This phase did not send orders or query private account history.
+the adapter. Phase 1 did not send orders or query private account history.
+
+The phase-3 master subsets, book, daily/minute pages and opening sequence are also
+actual public market responses. Their provenance is recorded separately from
+synthetic test schedules and faults. `live_read_verification.json` records a direct
+adapter run against production quotes, including source hashes and request paths.
+It covers authentication, master classification, ticker/top of book, historical
+minutes, five-minute aggregation and native daily bars. Broker mutations were zero.
+It does not establish paper-server compatibility or Freqtrade trading readiness.
 
 Subsequent synthetic order/error fixtures must be identified as synthetic and
 trace their field definitions to a pinned official specification. They must never

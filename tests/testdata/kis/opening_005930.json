@@ -1,0 +1,102 @@
+[
+  {
+    "observed_at": "2026-10-22T00:00:22.273461+00:00",
+    "response": {
+      "output1": {
+        "prdy_vrss": "-2000",
+        "prdy_vrss_sign": "5",
+        "prdy_ctrt": "-0.89",
+        "stck_prdy_clpr": "223500",
+        "acml_vol": "438031",
+        "acml_tr_pbmn": "97010642000",
+        "hts_kor_isnm": "삼성전자",
+        "stck_prpr": "221500"
+      },
+      "output2": [
+        {
+          "stck_bsop_date": "20261022",
+          "stck_cntg_hour": "090000",
+          "stck_prpr": "221500",
+          "stck_oprc": "221500",
+          "stck_hgpr": "221500",
+          "stck_lwpr": "220500",
+          "cntg_vol": "438005",
+          "acml_tr_pbmn": "97010642000"
+        }
+      ],
+      "rt_cd": "0",
+      "msg_cd": "MCA00000",
+      "msg1": "정상처리 되었습니다."
+    }
+  },
+  {
+    "observed_at": "2026-10-22T00:00:42.338334+00:00",
+    "response": {
+      "output1": {
+        "prdy_vrss": "-3500",
+        "prdy_vrss_sign": "5",
+        "prdy_ctrt": "-1.57",
+        "stck_prdy_clpr": "223500",
+        "acml_vol": "495832",
+        "acml_tr_pbmn": "109765088250",
+        "hts_kor_isnm": "삼성전자",
+        "stck_prpr": "220000"
+      },
+      "output2": [
+        {
+          "stck_bsop_date": "20261022",
+          "stck_cntg_hour": "090000",
+          "stck_prpr": "220000",
+          "stck_oprc": "221500",
+          "stck_hgpr": "221500",
+          "stck_lwpr": "220000",
+          "cntg_vol": "495806",
+          "acml_tr_pbmn": "109765088250"
+        }
+      ],
+      "rt_cd": "0",
+      "msg_cd": "MCA00000",
+      "msg1": "정상처리 되었습니다."
+    }
+  },
+  {
+    "observed_at": "2026-10-22T00:01:02.450703+00:00",
+    "response": {
+      "output1": {
+        "prdy_vrss": "-2250",
+        "prdy_vrss_sign": "5",
+        "prdy_ctrt": "-1.01",
+        "stck_prdy_clpr": "223500",
+        "acml_vol": "526577",
+        "acml_tr_pbmn": "116557614500",
+        "hts_kor_isnm": "삼성전자",
+        "stck_prpr": "221250"
+      },
+      "output2": [
+        {
+          "stck_bsop_date": "20261022",
+          "stck_cntg_hour": "090100",
+          "stck_prpr": "221250",
+          "stck_oprc": "221250",
+          "stck_hgpr": "221250",
+          "stck_lwpr": "221000",
+          "cntg_vol": "793",
+          "acml_tr_pbmn": "116557614500"
+        },
+        {
+          "stck_bsop_date": "20261022",
+          "stck_cntg_hour": "090000",
+          "stck_prpr": "221250",
+          "stck_oprc": "221500",
+          "stck_hgpr": "221500",
+          "stck_lwpr": "220000",
+          "cntg_vol": "525758",
+          "acml_tr_pbmn": "116382167250"
+        }
+      ],
+      "rt_cd": "0",
+      "msg_cd": "MCA00000",
+      "msg1": "정상처리 되었습니다."
+    }
+  }
+]
