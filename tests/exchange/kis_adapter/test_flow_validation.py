@@ -211,3 +211,35 @@ def test_delayed_batch_publication_never_refreshes_old_inputs(evidence, tmp_path
     result = enrich_model_flow(frame, model["symbol"], "1m", path, lambda tf, when: when)
     assert result["kis_model_status"].tolist() == ["not_collected", "stale_observation"]
     assert result["kis_model_foreign_shares"].isna().all()
+
+
+@pytest.mark.parametrize("boundary,missing_window", [(10, "midday"), (14, "afternoon")])
+def test_window_coverage_uses_reference_time_despite_delayed_inference(
+    evidence, boundary, missing_window
+):
+    from datetime import datetime
+
+    from freqtrade.exchange.kis_adapter.flow_validation import window_for
+    from freqtrade.exchange.kis_adapter.rules import SEOUL
+
+    counts = {}
+    for index, pair in enumerate(evidence["pairs"]):
+        reference, prediction = pair["reference"], pair["prediction"]
+        asof = datetime.fromtimestamp(reference["asof"] / 1000, SEOUL)
+        if window_for(asof) == missing_window:
+            received = asof.replace(hour=boundary - 1, minute=59, second=(index % 3) * 10)
+            inference = received + timedelta(minutes=1)
+            reference["asof"] = dt_ts(received)
+            reference["available_at"] = dt_ts(inference)
+            prediction["input_snapshot"]["available_at"] = dt_ts(received)
+            prediction["input_snapshot"]["collection_started_at"] = dt_ts(
+                received - timedelta(seconds=10)
+            )
+            prediction["inference_at"] = prediction["observed_at"] = dt_ts(inference)
+            asof = received
+        key = window_for(asof)
+        counts[key] = counts.get(key, 0) + 1
+    report = evaluate_intraday(evidence, NOW)
+    assert counts.get(missing_window, 0) == 0
+    assert report["windows"][missing_window]["pairs"] == 0
+    assert not report["eligible"]

@@ -68,9 +68,10 @@ def _aligned_pair(pair, models, evidence, now):
         raise ValueError("KIS validation prediction cannot be reproduced")
     actual = [quantity(reference["targets"][who]) for who in TARGETS]
     predicted = [expected[who] for who in TARGETS]
-    fraction = (when - session.opening) / (session.closing - session.opening)
+    observation_time = datetime.fromtimestamp(reference["asof"] / 1000, SEOUL)
+    fraction = (observation_time - session.opening) / (session.closing - session.opening)
     baseline = [model["training_target_mean"][who] * fraction for who in TARGETS]
-    return day, window_for(when), snapshot["available_at"], actual, predicted, baseline
+    return day, window_for(observation_time), snapshot["available_at"], actual, predicted, baseline
 
 
 def evaluate_intraday(evidence, now):
