@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from datetime import datetime, timedelta
 
 import ccxt
@@ -102,7 +103,8 @@ def test_json_round_trip_and_no_overwrite(model, tmp_path):
     path = tmp_path / "model.json"
     save_model(model, path)
     assert load_model(path) == model
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert path.stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         save_model(model, path)
     modified = json.loads(path.read_text())

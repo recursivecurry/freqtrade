@@ -102,12 +102,17 @@ days old. Predictions also enforce that age limit, model expiry (seven days afte
 creation), matching market/symbol/unit, complete inputs and a maximum five-minute
 input age. Long holidays may therefore leave estimates unavailable.
 
-Artifacts are immutable JSON, created exclusively with `0600` permissions. Numeric
+Artifacts are immutable JSON, created exclusively with `0600` permissions on POSIX. Numeric
 arrays, target definitions and availability dates are checked when loaded. A SHA-256
 identifier binds coefficients, training metadata and metrics. It detects accidental
 modification, not malicious rewriting by a trusted file owner. No pickle executes
 when loading a model. Preserve each artifact and its source history to reproduce
 predictions; later corrections create a new model identifier.
+Schema 2 also binds the candidate universe and fitting parameters into a `recipe_id`,
+so a rolling daily model can share a validation protocol without pretending that
+one seven-day artifact covers ten trading days. Recreate earlier schema-1 artifacts
+from retained history. Windows file privacy requires the user's account ACL; POSIX
+mode bits are not an ACL guarantee on Windows.
 
 ## Research collection and display
 
@@ -157,9 +162,85 @@ age; a later model/record cannot rewrite an earlier decision. Missing archives a
 read-only and return missing values. The existing official reader now also labels
 its preliminary and post-close data explicitly in separate label columns.
 
-This phase does not activate numeric model inputs. Live data-to-display and actual
-intraday reference validation remain pending; the next phase supplies the evidence
-gate. No existing strategy automatically opts in to model estimates.
+`inference_at` records inference completion. A collection batch publishes its
+records only after collecting the batch; it never backdates publication to each
+earlier inference. Input age is checked from the original collection start, so
+delayed publication cannot make old inputs fresh. No existing strategy opts in
+automatically; numeric columns require the explicit evidence gate below.
+
+## Matched-reference validation and activation
+
+An evidence JSON contains `protocol="kis-flow-intraday-v1"`, a
+`protocol_registered_at` millisecond timestamp preceding all evaluated collection,
+`symbol`, `recipe_id`, complete `models`, independently verified date-keyed
+`sessions`, and `pairs`. Each pair contains an archived `prediction` and a
+`reference`. Retain the original independent reference responses outside Git.
+
+Reference fields are `symbol`, `market="KRX"`, `unit="shares"`, `business_date`,
+`frequency="intraday"`, `basis="reported_cumulative_net_quantity"`, `source`,
+`response_sha256`, `cumulative_from` (verified session opening), `asof`,
+`available_at` and `targets` with foreign/institution/individual quantities.
+`asof` must match that prediction input snapshot's `available_at`; reference
+publication may be later but may not be in the evaluator's future. A post-close
+daily total is not an intraday reference. Do not relabel or interpolate daily data
+to manufacture this evidence.
+
+The evaluator reloads the original artifacts and reproduces each prediction from
+its original snapshot at its inference time. Duplicate input timestamps, later
+models, incompatible recipes, units, dates, market scope and references fail.
+The report requires ten distinct dates and thirty pairs in **each** opening,
+midday and afternoon window. All participant and signal metrics must pass the
+predeclared gates; incomplete or poor-quality evidence returns `eligible=false`.
+The zero baseline and the preceding-training-mean baseline (scaled by elapsed
+session fraction for intraday comparisons) are reported separately. All evaluated
+dates must be within sixty calendar days, with the latest within fourteen days.
+
+The protocol date, session provenance, reference source and response hash are
+operator-supplied evidence, not cryptographic proof of authenticity. Review those
+original records before using the evidence for activation. The evaluator verifies
+consistency and reproducibility; it cannot establish that an external supplier's
+data or an operator's declared timestamps are truthful. Alignment is explicitly
+`receipt_time_with_unknown_source_latency`, since KIS input update times are absent.
+Keep that limitation when interpreting measured accuracy.
+
+```bash
+python -m freqtrade.exchange.kis_adapter.model_flow validate \
+  --evidence user_data/intraday-evidence.json --output user_data/intraday-report.json
+python -m freqtrade.exchange.kis_adapter.model_flow collect \
+  --config user_data/kis-flow.config.private.json --model user_data/flow-model.json \
+  --database user_data/kis-flow.sqlite \
+  --validation-evidence user_data/intraday-evidence.json --interval 300
+```
+
+The validation command needs no broker credentials and returns nonzero for an
+ineligible report. The collector re-evaluates the evidence, rather than trusting
+an editable report's success flag. Multiple symbols accept repeated evidence paths.
+Only a matching recipe, passing current model daily metrics and an unexpired report
+can produce `availability=validated`. Reports expire after the fourteenth calendar
+day following their latest reference date. Passing evidence applies only to future
+collections; it does not turn earlier research records into validated history.
+The strategy reader also enforces report availability before input collection and
+expiry at the candle decision. Removing the evidence option restores research-only
+collection; official investor fields remain independent.
+
+## Validation status
+
+On 2026-10-23 KST, the production read-only history command collected thirty complete
+dates for `005930/KRW` and members `00003`/`00050`, covering 2026-09-07 through
+2026-10-22. Four quotation receipts and source hashes are recorded in
+`tests/testdata/kis/model_input_verification.json`. The collector exposes GET-only
+quotation paths and no broker mutation action. This check validates post-close
+input normalization and overlap for that symbol/member set, not intraday coverage,
+source update cadence, training quality or the entire candidate universe.
+
+Synthetic offline tests exercise passed/failed evidence, reproducibility, duplicate
+observations, future data, expiry, separate labels and as-of numeric gating. They
+are not empirical intraday accuracy evidence. No eligible real intraday evidence
+is supplied or activated by this change. Live data-to-display, polling/load
+measurements and the ten-day matched-reference observation remain pending, so
+issue #11 must stay open. The broader Windows CI matrix also has existing KIS
+fixture/locale/permission failures; passing the scoped local tests does not certify
+that matrix.
 
 ## Official references
 
