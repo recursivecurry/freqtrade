@@ -35,6 +35,15 @@ Download/cache paths preserve the period labels. Backtests visit the actual
 session-labelled rows rather than advancing a monthly simulation by fixed
 30-day intervals. Continuous-market backtests retain their existing time grid.
 
+KIS informative data uses the exchange's publication clock, including during
+historical callback slicing and vectorized indicator merges. The `@informative`
+decorator supplies that clock automatically and bypasses its fixed-interval merge
+cache for KIS. Manual calls must use
+`merge_informative_pair(..., publication_time=self.dp.candle_publication_time)`.
+The generic helper rejects tagged KIS frames without this clock. Preserve the
+frame's metadata when constructing manual informative data; arbitrary external
+frames cannot be identified as KIS data automatically.
+
 ## Verified API contracts
 
 | Data | Endpoint under `/uapi/domestic-stock/v1/quotations/` | TR ID | Meaning |

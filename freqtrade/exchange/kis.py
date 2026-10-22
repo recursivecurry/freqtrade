@@ -220,16 +220,22 @@ class Kis(Exchange):
         try:
             if dt_ts(when) != self._period_publication_cutoff(timeframe, now):
                 return None
-            start = period_bounds(when.astimezone(SEOUL).date(), timeframe)[1]
-            end = now.astimezone(SEOUL).date()
-            following = None
-            for index in range((end - start).days + 1):
-                session = self._api._data.session(start + timedelta(days=index))
-                if session and following is None:
-                    following = session.opening
-            return following
+            return self.candle_publication_time(timeframe, when)
         except ccxt.BaseError:
             return None
+
+    def candle_publication_time(self, timeframe, when):
+        if timeframe not in PERIOD_TIMEFRAMES:
+            return self.candle_end_time(timeframe, when)
+        start = period_bounds(when.astimezone(SEOUL).date(), timeframe)[1]
+        try:
+            for index in range(32):
+                session = self._api._data.session(start + timedelta(days=index))
+                if session:
+                    return session.opening
+        except ccxt.BaseError:
+            return None
+        return None
 
     def order_expired(self, pair: str, created: datetime, when: datetime) -> bool:
         """Expire a DAY order at its close, including across a restart or date rollover."""

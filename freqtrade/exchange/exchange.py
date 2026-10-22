@@ -1250,6 +1250,9 @@ class Exchange(LoggingMixin):
     def candle_end_time(self, timeframe: str, when: datetime) -> datetime:
         return when + timedelta(seconds=timeframe_to_seconds(timeframe))
 
+    def candle_publication_time(self, timeframe: str, when: datetime) -> datetime | None:
+        return self.candle_end_time(timeframe, when)
+
     def candle_close_time(self, timeframe: str, when: datetime, now: datetime) -> datetime | None:
         """Return when a candle's signal becomes available."""
         return when + timedelta(seconds=timeframe_to_seconds(timeframe))
