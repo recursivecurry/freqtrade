@@ -6,6 +6,8 @@ import ccxt
 import ccxt.async_support as ccxt_async
 
 from freqtrade.exchange.kis_adapter.client import KisClient
+from freqtrade.exchange.kis_adapter.market_data import KisMarketData
+from freqtrade.exchange.kis_adapter.rules import round_price
 from freqtrade.exchange.kis_adapter.sync import KisSync
 
 
@@ -15,10 +17,12 @@ class KisAsync(ccxt_async.Exchange):
     def __init__(self, config: dict, *, client: KisClient | None = None) -> None:
         super().__init__({"apiKey": config.get("apiKey", ""), "secret": config.get("secret", "")})
         self._client = client or KisClient(config)
+        self._data = KisMarketData(self._client, config.get("options", {}))
         self._client.acquire(config)
         self.session = self._client
         self.own_session = False
         self._close_task: asyncio.Task | None = None
+        self.precisionMode = ccxt.TICK_SIZE
 
     def describe(self):
         """Use the same capability contract as the synchronous facade."""
@@ -28,6 +32,43 @@ class KisAsync(ccxt_async.Exchange):
         if self.session is None:
             raise ccxt.ExchangeNotAvailable("kis async facade is closed")
         return await asyncio.to_thread(self._client.get, path, tr_id, params)
+
+    def _check_read(self, params):
+        if self.session is None:
+            raise ccxt.ExchangeNotAvailable("kis async facade is closed")
+        if params:
+            raise ccxt.BadRequest("kis does not support additional request parameters")
+
+    async def fetch_markets(self, params=None):
+        """Return supported equities and ETFs without blocking the event loop."""
+        self._check_read(params)
+        return await asyncio.to_thread(self._data.fetch_markets)
+
+    async def fetch_ticker(self, symbol: str, params=None):
+        """Read a ticker and its independently observed top of book."""
+        self._check_read(params)
+        await self.load_markets()
+        return await asyncio.to_thread(self._data.fetch_ticker, self.market(symbol)["id"])
+
+    async def fetch_order_book(self, symbol: str, limit=None, params=None):
+        """Read up to ten sorted KRX order-book levels."""
+        self._check_read(params)
+        await self.load_markets()
+        return await asyncio.to_thread(
+            self._data.fetch_order_book, self.market(symbol)["id"], limit
+        )
+
+    async def fetch_ohlcv(self, symbol: str, timeframe="1m", since=None, limit=None, params=None):
+        """Read completed candles on the explicitly verified calendar."""
+        self._check_read(params)
+        await self.load_markets()
+        return await asyncio.to_thread(
+            self._data.fetch_ohlcv, self.market(symbol)["id"], timeframe, since, limit
+        )
+
+    def price_to_precision(self, symbol: str, price):
+        """Round prices using the security's current KRX price bands."""
+        return round_price(price, self.market(symbol)["info"]["assetClass"])
 
     async def close(self, clean_instance_data=False):
         """Wait for in-flight reads before releasing this facade's transport."""

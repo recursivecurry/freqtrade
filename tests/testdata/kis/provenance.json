@@ -8,5 +8,71 @@
     "captured_at": "2026-10-21T14:37:15.941973+00:00",
     "credentials": "not included",
     "orders_submitted": 0
+  },
+  "master_kospi_subset.json": {
+    "kind": "public_master_subset",
+    "environment": "public_download",
+    "source": "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip",
+    "source_sha256": "38cf35dd850a70a5ab57884055f72c84cbb07dd2c155d0d4d59911045a78a846",
+    "file_saved_at": "2026-10-21T23:57:17.091951+00:00",
+    "layout_source": "koreainvestment/open-trading-api@2077773a69a428daf63e148182511f068cc45de3/stocks_info/kis_kospi_code_mst.py",
+    "orders_submitted": 0
+  },
+  "master_kosdaq_subset.json": {
+    "kind": "public_master_subset",
+    "environment": "public_download",
+    "source": "https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip",
+    "source_sha256": "e86239041ce3f354c6bf80e6864f6bb188f75e3e7fb853668742d6916e034a53",
+    "file_saved_at": "2026-10-21T23:57:17.113277+00:00",
+    "layout_source": "koreainvestment/open-trading-api@2077773a69a428daf63e148182511f068cc45de3/stocks_info/kis_kosdaq_code_mst.py",
+    "orders_submitted": 0
+  },
+  "book_005930.json": {
+    "kind": "public_market_response",
+    "environment": "live_read_only",
+    "symbol": "005930/KRW",
+    "file_saved_at": "2026-10-21T23:58:39.007457+00:00",
+    "credentials": "not included",
+    "orders_submitted": 0,
+    "endpoint": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+    "tr_id": "FHKST01010200"
+  },
+  "daily_raw_005930.json": {
+    "kind": "public_market_response",
+    "environment": "live_read_only",
+    "symbol": "005930/KRW",
+    "file_saved_at": "2026-10-22T00:01:12.878951+00:00",
+    "credentials": "not included",
+    "orders_submitted": 0,
+    "endpoint": "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+    "tr_id": "FHKST03010100"
+  },
+  "minutes_005930_20261021.json": {
+    "kind": "public_market_response",
+    "environment": "live_read_only",
+    "symbol": "005930/KRW",
+    "file_saved_at": "2026-10-22T00:05:25.356229+00:00",
+    "credentials": "not included",
+    "orders_submitted": 0,
+    "endpoint": "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
+    "tr_id": "FHKST03010230"
+  },
+  "opening_005930.json": {
+    "kind": "public_market_response_sequence",
+    "environment": "live_read_only",
+    "endpoint": "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
+    "tr_id": "FHKST03010230",
+    "symbol": "005930/KRW",
+    "purpose": "Observed start labels: 09:00 bar changes before 09:01 and a new 09:01 bar appears afterward",
+    "credentials": "not included",
+    "orders_submitted": 0
+  },
+  "live_read_verification.json": {
+    "kind": "adapter_validation_evidence",
+    "environment": "live_read_only",
+    "credentials": "not included",
+    "orders_submitted": 0,
+    "source_identity": "SHA-256 hashes of adapter source files recorded in the report",
+    "scope": "sync production market-data reads; not paper or Freqtrade trading validation"
   }
 }

@@ -1,0 +1,125 @@
+{
+  "environment": "live_read_only",
+  "started_at": "2026-10-22T00:20:50.776598+00:00",
+  "source_sha256": {
+    "sync.py": "a6a0b9abdc107881431abdafadfbd54d91531eee5e5bf80d1dfd3d06717df28b",
+    "client.py": "d761f7f5e49bdd0b658d19d703af3caddd02ccb5b32143705c0d9aad8fbc42e8",
+    "__init__.py": "d2c736fab0f339fdabec292e549b91a1d2b946e9be96bf71bb6e9d7fb87afcaf",
+    "rules.py": "8176daddc617b69a872823426e3fddfb4816a11c04a52a37b926a95433968a6e",
+    "parsers.py": "203b5aca1246231836426c44692710fb17da55f893b0170187e3655fbe67e172",
+    "async_client.py": "2d89667a8ff191abf09cc8fee9b585a207b4056e15c3b0c6ba39cabd1c3ddf79",
+    "market_data.py": "7088850b5901e745ecf8d8d947297e10cc01066c1bdbf3b76b88ffed2dd233c9"
+  },
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/oauth2/tokenP"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-price"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+    }
+  ],
+  "results": {
+    "markets": {
+      "count": 3900,
+      "stock": "stock",
+      "etf": "etf",
+      "alphanumeric_code": true
+    },
+    "ticker": {
+      "last": 222750.0,
+      "bid": 222500.0,
+      "ask": 223000.0,
+      "timestamp": null
+    },
+    "1m": {
+      "count": 10,
+      "first": [
+        1792540800000,
+        217000.0,
+        219000.0,
+        217000.0,
+        219000.0,
+        668634.0
+      ],
+      "last": [
+        1792541340000,
+        217750.0,
+        219000.0,
+        217750.0,
+        219000.0,
+        64982.0
+      ]
+    },
+    "5m": {
+      "count": 10,
+      "first": [
+        1792540800000,
+        217000.0,
+        219500.0,
+        217000.0,
+        217500.0,
+        969959.0
+      ],
+      "last": [
+        1792543500000,
+        223000.0,
+        223500.0,
+        222000.0,
+        222000.0,
+        177353.0
+      ]
+    },
+    "1d": {
+      "count": 1,
+      "first": [
+        1792508400000,
+        217000.0,
+        228000.0,
+        217000.0,
+        223500.0,
+        17268762.0
+      ],
+      "last": [
+        1792508400000,
+        217000.0,
+        228000.0,
+        217000.0,
+        223500.0,
+        17268762.0
+      ]
+    }
+  },
+  "status": "passed",
+  "finished_at": "2026-10-22T00:20:59.829621+00:00",
+  "broker_mutations": 0
+}

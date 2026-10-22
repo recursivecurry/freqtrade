@@ -60,8 +60,10 @@ class KisClient:
 
     def __init__(self, config: dict) -> None:
         options = config.get("options", {})
+        if not isinstance(options, dict):
+            raise ccxt.BadRequest("kis options must be a mapping")
         environment = options.get("environment", "paper")
-        if environment not in HOSTS:
+        if not isinstance(environment, str) or environment not in HOSTS:
             raise ccxt.BadRequest("kis requires environment paper or live")
         api_key, secret = config.get("apiKey"), config.get("secret")
         if not all(
