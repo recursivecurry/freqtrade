@@ -1240,7 +1240,7 @@ class Exchange(LoggingMixin):
         """Apply an order using the exchange's position-accounting policy."""
         trade.update_trade(order, recalculating)
 
-    def acknowledge_order_intent(self, order_id: str) -> None:
+    def acknowledge_order_intent(self, order: CcxtOrder) -> None:
         """Record completion after recovered order accounting has been committed."""
 
     def candle_execution_time(self, timeframe: str, when: datetime) -> datetime:

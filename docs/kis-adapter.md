@@ -525,9 +525,13 @@ dedicated-account restriction because the broker provides no client idempotency
 key. Restart recovery imports owned orders missing from the Freqtrade DB before
 new strategy activity. Import completion is acknowledged only after the Freqtrade
 accounting commit; an interruption replays unfinished accounting even when the
-Order row already exists. Terminal zero-fill entries retain canonical history
-without creating an economic Trade. Fully or partially filled orders update
-positions and estimated costs from cumulative totals without replaying earlier fills.
+Order row already exists. Changed cumulative fills, fees or order state reset that
+acknowledgement atomically with the canonical observation. Acknowledgement only
+applies when the persisted snapshot still matches the one used for accounting.
+Terminal zero-fill entries retain canonical history without creating an economic
+Trade; an existing empty Trade is removed when its order terminates during downtime.
+Fully or partially filled orders update positions and estimated costs from
+cumulative totals without replaying earlier fills.
 
 Cancellation first queries eligibility and validates the original routing branch
 and remaining whole quantity. The implementation uses the documented `TTTC0084R`

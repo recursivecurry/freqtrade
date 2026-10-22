@@ -274,6 +274,14 @@ class KisStore:
                     "INSERT OR REPLACE INTO kis_observations VALUES(?,?,?,?,?,?)",
                     (order["id"], self.scope, now, qty, gross, json.dumps(order)),
                 )
+                if previous is None or any(
+                    previous[key] != order[key]
+                    for key in ("filled", "cost", "fee", "status", "remaining")
+                ):
+                    self.db.execute(
+                        "UPDATE kis_intents SET imported=0 WHERE scope=? AND order_id=?",
+                        (self.scope, order["id"]),
+                    )
         if mismatch:
             self.block("inconsistent_cumulative_snapshot")
             raise ccxt.ExchangeError("kis cumulative order history requires reconciliation")
@@ -301,17 +309,33 @@ class KisStore:
             if intent["kind"] != "create" or identifier not in orders or intent["imported"]:
                 continue
             order = orders[identifier]
-            if order["status"] != "open" and not order["filled"]:
+            if (
+                order["status"] != "open"
+                and not order["filled"]
+                and not self.db.execute(
+                    "SELECT 1 FROM orders WHERE order_id=?", (identifier,)
+                ).fetchone()
+            ):
                 continue
             order["info"]["intentReferencePrice"] = intent["reference_price"]
             result.append(order)
         return result
 
-    def mark_imported(self, identifier):
+    def mark_imported(self, order):
         with self.transaction():
+            row = self.db.execute(
+                "SELECT snapshot FROM kis_observations WHERE scope=? AND order_id=?",
+                (self.scope, order["id"]),
+            ).fetchone()
+            current = json.loads(row[0]) if row else None
+            if current is None or any(
+                current[key] != order[key]
+                for key in ("filled", "cost", "fee", "status", "remaining")
+            ):
+                return
             self.db.execute(
                 "UPDATE kis_intents SET imported=1 WHERE scope=? AND kind='create' AND order_id=?",
-                (self.scope, identifier),
+                (self.scope, order["id"]),
             )
 
     def trades(self, symbol=None, since=None, limit=None, order=None):

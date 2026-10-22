@@ -318,11 +318,11 @@ class Kis(Exchange):
             order_id, pair, since, (params or {}) | {"order": order_id}
         )
 
-    def acknowledge_order_intent(self, order_id):
+    def acknowledge_order_intent(self, order):
         if self._paper_enabled:
             try:
                 with self._api._trading._operation():
-                    self._api._trading.store.mark_imported(order_id)
+                    self._api._trading.store.mark_imported(order)
             except ccxt.BaseError as exc:
                 raise TemporaryError(f"KIS intent acknowledgement failed: {exc}") from None
 

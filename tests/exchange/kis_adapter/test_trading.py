@@ -176,7 +176,7 @@ def import_order(order, service):
     trade.orders.append(Order.parse_from_ccxt_object(order, order["symbol"], order["side"]))
     Trade.session.add(trade)
     Trade.commit()
-    service.store.mark_imported(order["id"])
+    service.store.mark_imported(order)
 
 
 def test_clean_cash_and_working_reservation_are_not_settlement_balances(trading):
@@ -533,6 +533,77 @@ def test_interrupted_terminal_exit_import_replays_accounting(paper_bot, mocker, 
     assert len([c for c in broker.calls if c[0].endswith("order-cash")]) == 2
 
 
+def test_entry_canceled_during_downtime_is_cleaned_before_startup_refresh(paper_bot):
+    bot, service, broker = paper_bot
+    service.create_order("005930/KRW", "limit", "buy", 10, 10000)
+    bot.recover_exchange_order_intents()
+    assert service.store.intents()[0]["imported"] == 1
+    broker.rows[0].update(rmn_qty="0", cnc_cfrm_qty="10")
+    Trade.session.expire_all()
+    bot.recover_exchange_order_intents()
+    bot.startup_update_open_orders()
+    bot.manage_open_orders()
+    bot.recover_exchange_order_intents()
+    assert Trade.get_open_trades() == []
+    assert service.store.unimported() == []
+    assert not any(c[0].endswith("order-rvsecncl") for c in broker.calls)
+
+
+def test_later_terminal_fill_replays_after_order_update_commit_interruption(paper_bot, mocker):
+    bot, service, broker = paper_bot
+    service.create_order("005930/KRW", "limit", "buy", 10, 10000)
+    broker.fill(0, 10, 100000)
+    bot.recover_exchange_order_intents()
+    trade = Trade.get_open_trades()[0]
+    sell = service.create_order("005930/KRW", "limit", "sell", 10, 11000)
+    bot.recover_exchange_order_intents()
+    assert all(i["imported"] for i in service.store.intents())
+    broker.fill(1, 10, 110000)
+    interrupted = mocker.patch.object(
+        bot.exchange, "update_trade_from_order", side_effect=RuntimeError("synthetic interruption")
+    )
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        bot.update_trade_state(trade, sell["id"], service.fetch_order(sell["id"]), send_msg=False)
+    assert Order.order_by_id(sell["id"]).status == "closed"
+    assert next(i for i in service.store.intents() if i["order_id"] == sell["id"])["imported"] == 0
+    mocker.stop(interrupted)
+    Trade.session.expire_all()
+    bot.recover_exchange_order_intents()
+    bot.startup_update_open_orders()
+    bot.recover_exchange_order_intents()
+    Trade.session.refresh(trade)
+    assert not trade.is_open and trade.close_profit_abs == 9570
+    assert service.store.unimported() == []
+    assert len(service.fetch_my_trades()) == 2
+
+
+def test_new_fill_during_wallet_refresh_cannot_acknowledge_an_older_snapshot(paper_bot, mocker):
+    bot, service, broker = paper_bot
+    service.create_order("005930/KRW", "limit", "buy", 10, 10000)
+    broker.fill(0, 10, 100000)
+    bot.recover_exchange_order_intents()
+    trade = Trade.get_open_trades()[0]
+    sell = service.create_order("005930/KRW", "limit", "sell", 10, 11000)
+    bot.recover_exchange_order_intents()
+    broker.fill(1, 3, 33000)
+    first = service.fetch_order(sell["id"])
+
+    def refresh(*args, **kwargs):
+        broker.rows[1].update(
+            tot_ccld_qty="10", tot_ccld_amt="110000", avg_prvs="11000", rmn_qty="0"
+        )
+        broker.holdings["005930"] = 0
+        service.fetch_balance()
+
+    mocker.patch.object(bot.wallets, "update", side_effect=refresh)
+    bot.update_trade_state(trade, sell["id"], first, send_msg=False)
+    assert trade.amount == 7
+    assert next(i for i in service.store.intents() if i["order_id"] == sell["id"])["imported"] == 0
+    bot.recover_exchange_order_intents()
+    assert not trade.is_open and trade.close_profit_abs == 9570
+    assert service.store.unimported() == []
+
+
 def test_partial_exit_cumulative_updates_do_not_close_early_or_double_charge(paper_bot):
     bot, service, broker = paper_bot
     service.create_order("005930/KRW", "limit", "buy", 10, 10000)
@@ -570,9 +641,8 @@ def test_partial_exit_cumulative_updates_do_not_close_early_or_double_charge(pap
 def test_unsettled_sale_cash_is_held_until_calendar_and_broker_agree(trading, mocker):
     service, broker = trading
     buy = service.create_order("005930/KRW", "limit", "buy", 10, 10000)
-    import_order(buy, service)
     broker.fill(0, 10, 100000)
-    service.fetch_orders()
+    import_order(service.fetch_order(buy["id"]), service)
     sell = service.create_order("005930/KRW", "limit", "sell", 10, 10000)
     import_order(sell, service)
     broker.fill(1, 10, 100000)
