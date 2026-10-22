@@ -35,6 +35,8 @@ READ_PATHS = frozenset(
         "foreign-institution-total",
         "inquire-investor",
         "investor-trade-by-stock-daily",
+        "inquire-member-daily",
+        "program-trade-by-stock-daily",
     )
 ) | frozenset(
     "trading/" + name
