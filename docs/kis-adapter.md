@@ -5,6 +5,9 @@ Securities (KIS), tracked in [issue #1](https://github.com/recursivecurry/freqtr
 It is not an upstream CCXT integration or an officially supported Freqtrade exchange.
 This document defines the implementation contract; it does not establish trading readiness.
 
+The [candle and investor-flow extension](kis-market-data.md) records the additional
+timeframe scope, public response evidence and investor-data limitations.
+
 ## Baseline and scope
 
 - Freqtrade: `2026.10-dev`, starting from `0db79d391f646eafbdf3c0976dd55dc90b296522`.
