@@ -1,0 +1,21 @@
+name: freqtrade-kis
+
+services:
+  kis:
+    image: freqtrade-kis:${KIS_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      labels:
+        org.opencontainers.image.revision: ${KIS_SOURCE_REVISION:-unversioned}
+    restart: "no"
+    volumes:
+      - ./user_data/kis:/freqtrade/user_data
+    ports:
+      - "127.0.0.1:8082:8080"
+    command: >
+      trade
+      --config /freqtrade/user_data/config.json
+      --config /freqtrade/user_data/config.private.json
+      --strategy KisValidationStrategy
+      --strategy-path /freqtrade/freqtrade/exchange/kis_adapter

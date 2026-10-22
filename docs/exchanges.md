@@ -18,6 +18,11 @@ Feel free to test other exchanges and submit your feedback or PR to improve the 
 
 Some exchanges require special configuration, which can be found below.
 
+This fork also includes an experimental local KIS domestic-equities adapter.
+Its [contract](kis-adapter.md) and [development deployment guide](kis-deployment.md)
+describe verified behavior and pending paper-server checks. It is not an upstream
+CCXT integration or an officially supported Freqtrade exchange.
+
 ### Sample exchange configuration
 
 A exchange configuration for "binance" would look as follows:
