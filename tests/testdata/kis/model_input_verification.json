@@ -1,0 +1,23 @@
+{
+  "verification": "post_close_read_only_history",
+  "symbol": "005930/KRW",
+  "market": "KRX",
+  "unit": "shares",
+  "members": ["00003", "00050"],
+  "requested_since": "2026-09-01",
+  "requested_until": "2026-10-22",
+  "complete_dates": 30,
+  "first_date": "2026-09-07",
+  "last_date": "2026-10-22",
+  "available_at": 1792681751316,
+  "intraday_updates": "unverified",
+  "intraday_accuracy": "unverified",
+  "production_activation": false,
+  "mutation_verification": "read_only_collector_code_path; no_separate_transport_audit",
+  "sources": [
+    {"endpoint": "inquire-member-daily", "tr_id": "FHPST04540000", "member_code": "00003", "request_started_at": 1792681746845, "received_at": 1792681748000, "source_updated_at": null, "response_sha256": "91cf9bee4dac6c464678ee86e6c84f2d2a1323700cfbeed5eed34a3b52630d29"},
+    {"endpoint": "inquire-member-daily", "tr_id": "FHPST04540000", "member_code": "00050", "request_started_at": 1792681748001, "received_at": 1792681749104, "source_updated_at": null, "response_sha256": "fb6a0d7a67f33972b4248e7b15f6cb7c8bd047f3f7efc5f5128765f063fc4aa5"},
+    {"endpoint": "program-trade-by-stock-daily", "tr_id": "FHPPG04650201", "request_started_at": 1792681749105, "received_at": 1792681750213, "source_updated_at": null, "response_sha256": "8293395b3f77c441efb0864999da87093a08cf68b60b99de0701b2cdeab7cdd8"},
+    {"endpoint": "investor-trade-by-stock-daily", "tr_id": "FHPTJ04160001", "request_started_at": 1792681750215, "received_at": 1792681751313, "source_updated_at": null, "response_sha256": "76f29a217a69f63ba87a1bed2e999b28791fb48ed68c5cbe3f4fec4eeea9df1c"}
+  ]
+}

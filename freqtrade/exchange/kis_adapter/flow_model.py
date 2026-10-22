@@ -135,7 +135,7 @@ def train_model(
     )
     members, scale, coefficients = _fit(samples[-training_days:], dominant_members, alpha)
     model = {
-        "schema": 1,
+        "schema": 2,
         "symbol": history["symbol"],
         "market": "KRX",
         "unit": "shares",
@@ -156,7 +156,21 @@ def train_model(
         "folds": folds,
         "daily_gate_passed": all(passes(value) for value in report.values()),
         "intraday_validation": "pending",
+        "training_target_mean": {
+            who: float(np.mean([s["targets"][who] for s in samples[-training_days:]]))
+            for who in TARGETS
+        },
+        "recipe": {
+            "algorithm": "ridge_rms_no_intercept_v1",
+            "symbol": history["symbol"],
+            "training_days": training_days,
+            "evaluation_days": evaluation_days,
+            "dominant_members": min(dominant_members, len(samples[0]["members"])),
+            "alpha": alpha,
+            "candidates": sorted(samples[0]["members"]),
+        },
     }
+    model["recipe_id"] = fingerprint(model["recipe"])
     model["model_id"] = fingerprint(model)
     validate_model(model)
     return model
@@ -170,6 +184,7 @@ def validate_model(model):
         members = model["members"]
         dimensions = len(members) + 1
         scalars = [*model["scale"], *(v for row in model["coefficients"] for v in row)]
+        scalars += list(model["training_target_mean"].values())
         if any(type(value) not in (int, float) for value in scalars):
             raise ValueError
         scale, coefficients = (
@@ -177,7 +192,7 @@ def validate_model(model):
             np.asarray(model["coefficients"], dtype=float),
         )
         if (
-            model["schema"] != 1
+            model["schema"] != 2
             or model["market"] != "KRX"
             or model["unit"] != "shares"
             or model["targets"] != list(TARGETS)
@@ -200,6 +215,30 @@ def validate_model(model):
             or date.fromisoformat(model["train_end_date"])
             >= datetime.fromtimestamp(model["created_at"] / 1000, SEOUL).date()
             or model["intraday_validation"] != "pending"
+            or set(model["training_target_mean"]) != set(TARGETS)
+            or set(model["daily_metrics"]) != {*TARGETS, "foreign_minus_individual"}
+            or type(model["training_days"]) is not int
+            or model["training_days"] < 20
+            or type(model["evaluation_days"]) is not int
+            or model["evaluation_days"] < 10
+            or type(model["alpha"]) not in (int, float)
+            or model["alpha"] <= 0
+        ):
+            raise ValueError
+        recipe = model["recipe"]
+        candidates = recipe["candidates"]
+        if (
+            model["recipe_id"] != fingerprint(recipe)
+            or recipe["algorithm"] != "ridge_rms_no_intercept_v1"
+            or recipe["symbol"] != model["symbol"]
+            or recipe["training_days"] != model["training_days"]
+            or recipe["evaluation_days"] != model["evaluation_days"]
+            or recipe["alpha"] != model["alpha"]
+            or recipe["dominant_members"] != len(members)
+            or not 1 <= len(candidates) <= 20
+            or len(set(candidates)) != len(candidates)
+            or any(not re.fullmatch(r"[0-9]{5}", m) for m in candidates)
+            or not set(members) <= set(candidates)
         ):
             raise ValueError
     except (KeyError, TypeError, ValueError, OverflowError):
