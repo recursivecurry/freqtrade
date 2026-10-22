@@ -24,6 +24,7 @@ from freqtrade.exchange.kis_adapter.client import KisClient
 from freqtrade.exchange.kis_adapter.costs import estimate_cost
 from freqtrade.exchange.kis_adapter.rules import SEOUL, broker_timestamp
 from freqtrade.optimize.backtesting import Backtesting
+from freqtrade.persistence import LocalTrade
 from freqtrade.resolvers import ExchangeResolver, StrategyResolver
 from tests.exchange.kis_adapter.test_market_data import FrozenDateTime, load, response
 
@@ -431,6 +432,74 @@ def test_daily_backtest_fills_close_and_callbacks_share_the_session_clock(
         assert filled.call_args.kwargs["current_time"] == expected
         detail = expected + timedelta(minutes=5)
         assert exchange.candle_execution_time("1d", detail) == detail
+    finally:
+        Backtesting.cleanup()
+        exchange.close()
+
+
+def test_daily_detail_generator_runs_trades_on_actual_session_rows(kis_config, sources, mocker):
+    kis_config.update(
+        runmode=RunMode.BACKTEST,
+        timeframe="1d",
+        timeframe_detail="1m",
+        stake_amount=500000,
+        dry_run_wallet=1000000,
+        max_open_trades=1,
+    )
+    exchange = Kis(kis_config)
+    try:
+        backtest = Backtesting(kis_config, exchange=exchange)
+        backtest._set_strategy(backtest.strategylist[0])
+        backtest.strategy.minimal_roi = {0: 1.0}
+        open_time = datetime(2026, 10, 21, tzinfo=UTC)
+        exit_time = open_time + timedelta(minutes=1)
+        mocker.patch.object(
+            backtest.strategy,
+            "custom_exit",
+            side_effect=lambda **kwargs: (
+                "detail_validation" if kwargs["current_time"] >= exit_time else None
+            ),
+        )
+        filled = mocker.patch.object(backtest.strategy, "order_filled")
+        frame = pd.DataFrame(
+            {
+                "date": pd.to_datetime([open_time, exit_time]),
+                "open": 224000,
+                "high": 225000,
+                "low": 222000,
+                "close": 224000,
+                "volume": 1,
+            }
+        )
+        backtest.detail_data = {"005930/KRW": frame}
+        row = [
+            pd.Timestamp("2026-10-21T00:00:00+09:00"),
+            224000,
+            225000,
+            222000,
+            224000,
+            1,
+            0,
+            0,
+            0,
+            "",
+            "",
+        ]
+        seen = []
+        for when, pair, candle, last, direction in backtest.time_pair_generator(
+            datetime(2026, 10, 20, tzinfo=SEOUL),
+            datetime(2026, 10, 22, tzinfo=SEOUL),
+            ["005930/KRW"],
+            {"005930/KRW": [row]},
+        ):
+            seen.append(when)
+            assert when == candle[0].to_pydatetime()
+            backtest.backtest_loop(candle, pair, when, direction, not last)
+        assert seen == [open_time, exit_time]
+        assert [c.kwargs["current_time"] for c in filled.call_args_list] == seen
+        trade = LocalTrade.bt_trades[-1]
+        assert trade.open_date_utc == open_time and trade.close_date_utc == exit_time
+        assert trade.orders[-1].order_filled_date == exit_time
     finally:
         Backtesting.cleanup()
         exchange.close()

@@ -1730,7 +1730,7 @@ class Backtesting:
             # Critical to avoid exceeding max_open_trades in backtesting
             # when timeframe-detail is used and trades close within the opening candle.
             strategy_safe_wrapper(self.strategy.bot_loop_start, supress_error=True)(
-                current_time=current_time
+                current_time=self.exchange.candle_execution_time(self.timeframe, current_time)
             )
             pair_detail_cache: dict[str, list[tuple]] = {}
             pair_tradedir_cache: dict[str, LongShort | None] = {}
@@ -1771,17 +1771,6 @@ class Backtesting:
                     row = detail_data[idx]
                     trade_dir = pair_tradedir_cache.get(pair)
 
-                    if self.strategy.ignore_expired_candle(
-                        current_time - self.timeframe_td,  # last closed candle is 1 timeframe away.
-                        current_time_det,
-                        self.timeframe_secs,
-                        trade_dir is not None,
-                    ):
-                        # Ignore late entries eventually
-                        trade_dir = None
-
-                self.dataprovider._set_dataframe_max_date(current_time_det)
-
                 pair_has_open_trades = len(LocalTrade.bt_trades_open_pp[pair]) > 0
                 if pair in pairs_with_open_trades and not pair_has_open_trades:
                     # Pair has had open trades which closed in the current main candle.
@@ -1809,7 +1798,25 @@ class Backtesting:
                         pair_detail_cache[pair] = pair_detail
                         row = pair_detail_cache[pair][idx]
 
-                is_last_row = current_time_det == end_date
+                continuous = self.exchange.get_option("ohlcv_fill_missing")
+                current_time_det = (
+                    current_time_det
+                    if continuous
+                    else self.exchange.candle_execution_time(
+                        self.timeframe, row[DATE_IDX].to_pydatetime()
+                    )
+                )
+                is_last_row = (current_time_det if continuous else current_time) == end_date
+
+                if not is_first and self.strategy.ignore_expired_candle(
+                    self.exchange.candle_execution_time(self.timeframe, current_time)
+                    - self.timeframe_td,
+                    current_time_det,
+                    self.timeframe_secs,
+                    trade_dir is not None,
+                ):
+                    trade_dir = None
+                self.dataprovider._set_dataframe_max_date(current_time_det)
 
                 yield current_time_det, pair, row, is_last_row, trade_dir
             self._increment_progress()
