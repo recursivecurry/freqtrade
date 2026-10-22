@@ -3,14 +3,12 @@ import io
 import json
 import threading
 from http.client import BadStatusLine, IncompleteRead
-from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
 import ccxt
 import pytest
 
 from freqtrade.exchange.kis_adapter import KisAsync, KisSync
-from freqtrade.exchange.kis_adapter import client as client_module
 from freqtrade.exchange.kis_adapter.client import HOSTS, KisClient
 
 
@@ -35,20 +33,6 @@ class Transport:
         body = io.BytesIO(payload if isinstance(payload, bytes) else json.dumps(payload).encode())
         body.headers = {"tr_cont": continuation}
         return body
-
-
-@pytest.fixture
-def clock(monkeypatch):
-    state = SimpleNamespace(now=1000.0, waits=[])
-
-    def sleep(seconds):
-        state.waits.append(seconds)
-        state.now += seconds
-
-    monkeypatch.setattr(
-        client_module, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep)
-    )
-    return state
 
 
 def make_client(replies, config=None):

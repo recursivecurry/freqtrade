@@ -1080,6 +1080,19 @@ CONF_SCHEMA = {
                                 },
                             },
                         },
+                        "settlement_calendar": {
+                            "type": "object",
+                            "propertyNames": {"pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                            "additionalProperties": {
+                                "type": "object",
+                                "required": ["settles", "source"],
+                                "properties": {
+                                    "settles": {"type": "boolean"},
+                                    "source": {"type": "string", "minLength": 1},
+                                },
+                                "additionalProperties": False,
+                            },
+                        },
                     },
                 },
                 "pair_whitelist": {

@@ -58,7 +58,9 @@ def check_exchange(config: Config, check_for_bad: bool = True) -> bool:
             logger.warning(f'Exchange "{exchange}" will not work with Freqtrade. Reason: {reason}.')
 
     if exchange in LOCAL_EXCHANGES:
-        logger.warning(f'Exchange "{exchange}" is an experimental local adapter; dry-run only.')
+        logger.warning(
+            f'Exchange "{exchange}" is a local dry-run/paper adapter; production writes disabled.'
+        )
     elif MAP_EXCHANGE_CHILDCLASS.get(exchange, exchange) in SUPPORTED_EXCHANGES:
         logger.info(
             f'Exchange "{exchange}" is officially supported by the Freqtrade development team.'

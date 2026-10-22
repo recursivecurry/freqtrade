@@ -144,6 +144,7 @@ class Exchange(LoggingMixin):
         "ohlcv_fill_missing": True,
         "ohlcv_align_timestamps": True,
         "price_band_precision": False,
+        "include_open_fills": False,
         "ohlcv_require_since": False,
         # Seconds after the candle close time to assume a candle is actually closed
         "ohlcv_late_candle_grace_secs": 15,
@@ -1230,6 +1231,14 @@ class Exchange(LoggingMixin):
     def can_place_order(self, pair: str, when: datetime) -> bool:
         """Allow new orders unless an exchange has a restricted trading session."""
         return True
+
+    def recover_order_intents(self) -> list[CcxtOrder]:
+        """Return owned broker orders lost between transmission and the bot DB commit."""
+        return []
+
+    def update_trade_from_order(self, trade: Any, order: Any, recalculating: bool) -> None:
+        """Apply an order using the exchange's position-accounting policy."""
+        trade.update_trade(order, recalculating)
 
     def candle_execution_time(self, timeframe: str, when: datetime) -> datetime:
         """Return the execution time represented by a backtest candle."""

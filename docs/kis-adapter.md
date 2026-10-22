@@ -19,8 +19,8 @@ This document defines the implementation contract; it does not establish trading
 
 There are three independent execution modes. Dry-run uses KIS quotes but must never
 send order-changing requests. Paper trading sends orders only to the KIS simulation
-server. Live trading requires an explicit environment selection and a separate
-operational validation. The default example must use dry-run and paper mode.
+server. Production order writes remain disabled. The default example must use
+dry-run and paper mode.
 The existing ETF collector uses the production quote server. Its three configured
 profiles also authenticated and returned quotes on the paper server on 2026-10-22.
 This does not establish account binding or order permissions.
@@ -40,7 +40,7 @@ target account; a matching TR ID alone is not evidence of server compatibility.
 | `fetch_balance` | `trading/inquire-balance` | `TTTC8434R` / `VTTC8434R` | `CANO`, `ACNT_PRDT_CD`, positions in `output1`, account summary in `output2` |
 | cash buying-power check | `trading/inquire-psbl-order` | `TTTC8908R` / `VTTC8908R` | `PDNO`, price/order type; use `nrcvb_buy_amt` and `nrcvb_buy_qty`, never `max_buy_*` credit-inclusive values |
 | `create_order` buy / sell | `trading/order-cash` | buy `TTTC0012U` / `VTTC0012U`; sell `TTTC0011U` / `VTTC0011U` | string quantity/price, `EXCG_ID_DVSN_CD=KRX`; acceptance is not a fill |
-| `fetch_order`, `fetch_orders`, `fetch_open_orders` | `trading/inquire-daily-ccld` | within 3 months `TTTC0081R` / `VTTC0081R` | business-date range, account, symbol and order ID; cumulative order totals, not individual executions |
+| `fetch_order`, `fetch_orders`, `fetch_open_orders` | `trading/inquire-daily-ccld` | within 3 months `TTTC0081R` / `VTTC0081R`; older `CTSC9215R` / `VTSC9215R` | business-date range, account, symbol and order ID; cumulative order totals, not individual executions |
 | cancellation eligibility | `trading/inquire-psbl-rvsecncl` | `TTTC0084R` / unverified | obtain eligible quantity and original order routing identifiers before cancellation |
 | sellable quantity | `trading/inquire-psbl-sell` | `TTTC8408R` / unverified | `ord_psbl_qty`; the balance endpoint also supplies this field, but its freshness must be checked |
 | `cancel_order` | `trading/order-rvsecncl` | `TTTC0013U` / `VTTC0013U` | `KRX_FWDG_ORD_ORGNO`, `ORGN_ODNO`, cancellation code `02`, remaining quantity |
@@ -170,7 +170,7 @@ Production uses the dated intraday endpoint. Paper mode uses the documented
 today-only endpoint and rejects past-day intraday requests; no paper historical
 TR ID is guessed. Paper authentication and current-day candles were exercised in
 the phase-4 dry-run; private account/order availability remains for phase 6. These
-public-data capabilities do not enable balance, orders or synthetic fills.
+public-data checks do not establish private account compatibility.
 
 ### Balances and orders
 
@@ -184,8 +184,10 @@ Seed a durable bot cash ledger with the verified opening `dnca_tot_amt`. Establi
 the absence of unsettled transactions using broker history and settlement dates;
 an empty position list alone is insufficient. Persist the baseline, order intents,
 cumulative recognized fills and pending settlements in the existing Freqtrade DB.
-Use the existing KeyValueStore for the account-scoped baseline and Order/Trade
-records for subsequent cash movements; store no account number in public IDs.
+Use the existing KeyValueStore for the account-scoped baseline and KIS-owned tables
+in the same database for intents, cumulative observations and canonical deltas.
+Mirror owned orders into Freqtrade Order/Trade records; store no account number in
+public IDs.
 
 Define the normalized KRW wallet as follows (all values are cash, not stock value):
 
@@ -364,7 +366,8 @@ passes the environment and sessions; standard exchange secret fields supply keys
 
 The transport uses Python's HTTPS implementation with certificate validation,
 fixed broker hosts, no redirects and no environment proxy inheritance. It accepts
-only the allowlisted GET endpoints above. The only POST is token issuance.
+only the allowlisted GET endpoints above. Token issuance and explicitly enabled
+paper cash orders/cancellations are the only allowed POSTs.
 Tokens are cached in memory, renewed 60 seconds before expiry, and issuance
 attempts are at least 60 seconds apart. Separate processes do not share this
 budget or cache; use dedicated app keys or coordinate them operationally.
@@ -380,13 +383,14 @@ business errors remain `ExchangeError` until their codes are verified.
 
 The FK100/NK100 page reader retains continuation headers/cursors and fails on a
 missing cursor, repeated cursor, failed page or page limit. It never returns a
-successful partial list. Public market-data capabilities are now implemented;
-balances, broker orders and synthetic fills remain disabled.
+successful partial list. Private capabilities are enabled only for an explicitly
+configured paper trading client; quote-only clients do not advertise them.
 
 Each facade releases its reference on `close()`; the final release discards shared
 credentials and the token. HTTP responses are closed after each request. Cancelling
 an async await does not terminate an in-flight read in its worker; closing waits
-for serialized work to finish. This behavior applies only to read requests.
+for serialized work to finish. Cancelling an async order await cannot undo a
+request already transmitted by the worker; its durable intent must be reconciled.
 Network-isolated tests exercise the transport, concurrency, cancellation and
 cleanup. No KIS order or paper-server validation is established by these tests.
 
@@ -429,9 +433,10 @@ Real-account trading verification remains separate from the seven-phase delivery
 ## Freqtrade dry-run integration
 
 The exchange name is `kis`. Exchange listing identifies it as a local experimental
-adapter. Broker order capabilities remain disabled, and `dry_run=false` is rejected
-in trading mode. `exchange.kis.environment` independently selects `paper` or `live`
-quotes; it does not turn a dry-run order into a broker order.
+adapter. `dry_run=false` enables guarded broker orders only when
+`exchange.kis.environment=paper`. Production writes are rejected.
+`exchange.kis.environment` independently selects `paper` or `live` quotes;
+it does not turn a dry-run order into a broker order.
 
 Set `order_time_in_force` to `{"entry": "DAY", "exit": "DAY"}` in the configuration,
 because exchange validation runs before strategy loading. Only a static list of
@@ -479,3 +484,79 @@ produced estimated costs of 448 and 1,338 KRW and a net loss of 3,786 KRW. The D
 authenticated API and captured FreqUI display agreed. The broker audit contained
 only token issuance and quote reads: zero order/cancel requests. The independent
 existing Kraken dry-run service was not replaced by this validation process.
+
+## Paper order lifecycle implementation
+
+Paper trading requires an initialized, durable SQLite Freqtrade database and the
+standard secret fields `exchange.key`, `secret`, `account_id` (eight ASCII digits)
+and `uid` (two ASCII digits). Keep account fields as strings in a private JSON
+configuration: the generic environment loader converts numeric values to numbers,
+which loses leading zeroes. Never put secrets into `ccxt_config` or committed
+examples. The database baseline is bound to the environment and credential scope;
+changing credentials requires explicit reconciliation and migration.
+
+One serialized client owns the DB through a local file lock. This prevents two
+clients writing the same database; it is not an account-wide distributed lock.
+Use one dedicated account and app key per bot, with no concurrent manual trades
+or separate bot database. Position adjustment and skipping startup order updates
+are rejected. Close the bot before backing up the SQLite database, including all
+`kis_*` tables and KeyValueStore entries.
+
+Before the first order, repeated complete history and balance reads must agree
+on an empty, settled, cash-only account. Subsequent snapshots must match the
+persisted cash ledger and owned positions. An external order or unexplained cash
+movement creates a durable reconciliation block. Owned order/history queries
+continue during that block so fills can still be observed. New mutations require
+the account to reconcile and a fresh verified open trading session.
+
+`exchange.kis.settlement_calendar` is a date-keyed mapping whose records contain
+`settles` (boolean) and `source` (nonempty verified reference). Supply every calendar
+date after an order through its second settlement day, including closed days.
+The adapter does not infer weekdays or download a holiday feed. Each order retains
+its established settlement date. Sale proceeds remain reserved until that date
+and an agreeing broker cash snapshot; missing calendar data blocks submission.
+
+An order intent is committed before the single paper POST. A timeout or malformed
+acknowledgement stays unresolved and is never automatically resent. A later
+complete inquiry can match one previously unclaimed order by symbol, side, type,
+quantity, limit price and the bounded submission-time interval. No match stays
+blocked; multiple matches require operator reconciliation. This relies on the
+dedicated-account restriction because the broker provides no client idempotency
+key. Restart recovery imports owned orders missing from the Freqtrade DB before
+new strategy activity. Fully or partially filled orders update positions and
+estimated costs from cumulative totals without replaying earlier fills.
+
+Cancellation first queries eligibility and validates the original routing branch
+and remaining whole quantity. The implementation uses the documented `TTTC0084R`
+on the paper host because the pinned source documents no paper-specific ID; actual
+paper availability remains unverified. It does not invent a `V`-prefixed ID or
+send a cancellation when eligibility fails. An accepted cancel response leaves the
+order open until cumulative history establishes the terminal state. Late fills
+remain recognized. Prior-day DAY orders are queried, never declared canceled
+merely because the clock passed their close.
+
+The local canonical fill IDs and watermarks survive restart in SQLite. Quantity or
+gross-cost regressions, inconsistent identity/state transitions and corrupted
+canonical totals block publication of contradictory history. A fee-only correction
+does not create a synthetic fill. Partial entry/exit quantities and weighted gross
+averages reach Freqtrade accounting even while the order remains open.
+
+Costs remain explicitly estimated. The pinned period-profit inquiry groups fees
+and tax by date/product rather than providing an order identity; it is not an
+authoritative per-order cost source. Final-cost reconciliation is unverified.
+An estimated settlement cash difference blocks trading rather than silently
+adjusting the baseline. There is no automatic unblock or intent-deletion command:
+stop the bot, preserve the DB, compare broker history and resolve the discrepancy
+before any supervised repair. Deleting state or resending an unresolved request
+can duplicate orders and is not a recovery procedure.
+
+`tests/exchange/kis_adapter/test_orders.py` and `test_trading.py` use explicitly
+synthetic responses with network access blocked. They cover restart and lost
+responses, partial fills, cancellation races, atomic watermarks, settlement holds,
+external activity and Freqtrade DB import/accounting. These checks do not establish
+real paper account compatibility. On 2026-10-22 the collector's three profiles
+authenticated and read paper quotes, but all three paper balance probes failed.
+No broker order/cancel request was sent. Phase 6 must verify private endpoint
+availability, real paper fills/cancellations and DB reconciliation with a working
+paper-account binding before this adapter can be described as validated for paper
+trading.
