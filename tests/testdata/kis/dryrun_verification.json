@@ -1,0 +1,70 @@
+{
+  "environment": "paper quotes + Freqtrade dry-run; no broker orders",
+  "date": "2026-10-22",
+  "source_base_commit": "fc0e461456c0699ef5a4c187fcb0fa5c4d0ac898",
+  "source_sha256": {
+    "freqtrade/exchange/kis.py": "97ac8825fb4b28ed0aadcfcb06f88a08ac57511a39ec3803bcfb9ee554cd1810",
+    "freqtrade/exchange/kis_adapter/costs.py": "0e25c5975a75be7ab3670b4861fc5a0a53acfd825f45267462b4d049655efcd1",
+    "freqtrade/exchange/kis_adapter/client.py": "d761f7f5e49bdd0b658d19d703af3caddd02ccb5b32143705c0d9aad8fbc42e8",
+    "freqtrade/exchange/kis_adapter/market_data.py": "7088850b5901e745ecf8d8d947297e10cc01066c1bdbf3b76b88ffed2dd233c9",
+    "freqtrade/exchange/exchange.py": "093ecdf4360f18ca7f0634b35c04c964aec59708c804fbd415d96e04e8ed3444",
+    "freqtrade/freqtradebot.py": "79c461a35cb4a7b8cb65ddabae75d574e646bd1af5de5198778b4aeb7536f785",
+    "freqtrade/optimize/backtesting.py": "83094ab17256d967380b1b5fbaa9920fdf6234715f91a8ef76f4973566bfa365"
+  },
+  "runtime": {
+    "freqtrade": "2026.10-dev",
+    "ccxt": "4.5.88",
+    "python": "3.14.8",
+    "ui": "3.2.0",
+    "listen": "127.0.0.1:8081",
+    "strategy": "KisValidationStrategy; validation_mean rolling(2)>0, one entry, custom exit after20 seconds",
+    "costs": "synthetic validation-only buy commission .001; sell commission .001 + tax .002; not account tariff",
+    "wallet": "virtual 1000000 KRW"
+  },
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+      "count": 24
+    },
+    {
+      "method": "GET",
+      "path": "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
+      "count": 6
+    },
+    {
+      "method": "POST",
+      "path": "/oauth2/tokenP",
+      "count": 1
+    }
+  ],
+  "broker_mutations": 0,
+  "trades": [
+    {
+      "id": 1,
+      "pair": "005930/KRW",
+      "is_open": 0,
+      "amount": 2.0,
+      "open_rate": 224000.0,
+      "close_rate": 223000.0,
+      "fee_open": 0.001,
+      "fee_close": 0.003,
+      "fee_open_cost": 448.0,
+      "fee_close_cost": 1338.0,
+      "close_profit_abs": -3786.0,
+      "open_date": "2026-10-22 00:50:23.901780",
+      "close_date": "2026-10-22 00:50:46.399000",
+      "enter_tag": "validation_only",
+      "exit_reason": "validation_roundtrip"
+    }
+  ],
+  "api_matches_db": true,
+  "ui_matches_db": true,
+  "ui_capture": "docs/assets/kis-dryrun-phase4.png",
+  "unverified": [
+    "account binding and permissions",
+    "broker orders, balances, settlement, synthetic fills",
+    "actual account commission/taxes",
+    "custom Docker runtime"
+  ]
+}

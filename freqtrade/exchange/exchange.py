@@ -12,7 +12,7 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from math import floor, isnan
 from threading import Lock
-from typing import Any, Literal, TypeGuard, TypeVar
+from typing import Any, Literal, TypeGuard, TypeVar, overload
 from uuid import uuid4
 
 import ccxt
@@ -141,6 +141,9 @@ class Exchange(LoggingMixin):
         "ohlcv_params": {},
         "ohlcv_has_history": True,  # Some exchanges (Kraken) don't provide history via ohlcv
         "ohlcv_partial_candle": True,
+        "ohlcv_fill_missing": True,
+        "ohlcv_align_timestamps": True,
+        "price_band_precision": False,
         "ohlcv_require_since": False,
         # Seconds after the candle close time to assume a candle is actually closed
         "ohlcv_late_candle_grace_secs": 15,
@@ -1223,6 +1226,55 @@ class Exchange(LoggingMixin):
         return stake_amount / leverage
 
     # Dry-run methods
+
+    def can_place_order(self, pair: str, when: datetime) -> bool:
+        """Allow new orders unless an exchange has a restricted trading session."""
+        return True
+
+    def candle_execution_time(self, timeframe: str, when: datetime) -> datetime:
+        """Return the execution time represented by a backtest candle."""
+        return when
+
+    def order_expired(self, pair: str, created: datetime, when: datetime) -> bool:
+        """Leave expiration to the exchange unless its order lifetime is session-bound."""
+        return False
+
+    def validate_candle_data(self, pair: str, timeframe: str, dataframe: DataFrame) -> None:
+        """Allow exchange-specific checks on loaded historical candles."""
+
+    @overload
+    def estimate_fee_rate(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: float,
+        when: datetime,
+        fallback_rate: float,
+    ) -> float: ...
+
+    @overload
+    def estimate_fee_rate(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: float,
+        when: datetime,
+        fallback_rate: float | None,
+    ) -> float | None: ...
+
+    def estimate_fee_rate(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: float,
+        when: datetime,
+        fallback_rate: float | None,
+    ) -> float | None:
+        """Keep the existing fee unless an exchange has a dated, side-specific model."""
+        return fallback_rate
 
     def create_dry_run_order(
         self,
@@ -2755,6 +2807,7 @@ class Exchange(LoggingMixin):
             fill_missing=False,
             drop_incomplete=self._drop_incomplete_candle(candle_type),
             candle_type=candle_type,
+            align_timestamps=self.get_option("ohlcv_align_timestamps"),
         )
 
     async def _async_get_historic_ohlcv(
@@ -3018,9 +3071,10 @@ class Exchange(LoggingMixin):
             ticks,
             timeframe,
             pair=pair,
-            fill_missing=not has_cache,
+            fill_missing=self.get_option("ohlcv_fill_missing") and not has_cache,
             drop_incomplete=drop_incomplete_,
             candle_type=c_type,
+            align_timestamps=self.get_option("ohlcv_align_timestamps"),
         )
         # keeping parsed dataframe in cache
         if cache:
@@ -3031,7 +3085,7 @@ class Exchange(LoggingMixin):
                     concat([old, ohlcv_df], axis=0),
                     timeframe,
                     pair,
-                    fill_missing=True,
+                    fill_missing=self.get_option("ohlcv_fill_missing"),
                     drop_incomplete=False,
                     candle_type=c_type,
                 )

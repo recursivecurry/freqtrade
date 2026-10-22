@@ -40,7 +40,7 @@ from freqtrade.enums import (
 )
 from freqtrade.exceptions import ExchangeError, PricingError
 from freqtrade.exchange import Exchange, timeframe_to_minutes, timeframe_to_msecs
-from freqtrade.exchange.exchange_utils import price_to_precision
+from freqtrade.exchange.exchange_utils import price_to_precision, uses_continuous_candles
 from freqtrade.ft_types import AnnotationType
 from freqtrade.loggers import bufferHandler
 from freqtrade.persistence import CustomDataWrapper, KeyValueStore, Order, PairLocks, Trade
@@ -1704,6 +1704,12 @@ class RPC:
                     data_format=config["dataformat_ohlcv"],
                     candle_type=config.get("candle_type_def", CandleType.SPOT),
                     startup_candles=startup_candles,
+                    fill_up_missing=uses_continuous_candles(
+                        config.get("exchange", {}).get("name", "")
+                    ),
+                    startup_by_count=not uses_continuous_candles(
+                        config.get("exchange", {}).get("name", "")
+                    ),
                 )
                 if pair not in _data:
                     raise RPCException(

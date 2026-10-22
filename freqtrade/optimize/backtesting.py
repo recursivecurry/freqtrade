@@ -367,11 +367,15 @@ class Backtesting:
             timeframe=self.timeframe,
             timerange=self.timerange,
             startup_candles=self.required_startup,
+            fill_up_missing=self.exchange.get_option("ohlcv_fill_missing"),
+            startup_by_count=not self.exchange.get_option("ohlcv_fill_missing"),
             fail_without_data=True,
             data_format=self.config["dataformat_ohlcv"],
             candle_type=self.config.get("candle_type_def", CandleType.SPOT),
         )
 
+        for pair, dataframe in data.items():
+            self.exchange.validate_candle_data(pair, self.timeframe, dataframe)
         min_date, max_date = history.get_timerange(data)
 
         logger.info(
@@ -407,6 +411,8 @@ class Backtesting:
                 timeframe=self.timeframe_detail,
                 timerange=self.timerange,
                 startup_candles=0,
+                fill_up_missing=self.exchange.get_option("ohlcv_fill_missing"),
+                startup_by_count=not self.exchange.get_option("ohlcv_fill_missing"),
                 fail_without_data=True,
                 data_format=self.config["dataformat_ohlcv"],
                 candle_type=self.config.get("candle_type_def", CandleType.SPOT),
@@ -860,6 +866,9 @@ class Backtesting:
         amount: float | None = None,
     ) -> LocalTrade | None:
         if exit_.exit_flag:
+            current_time = self.exchange.candle_execution_time(self.timeframe, current_time)
+            if not self.exchange.can_place_order(trade.pair, current_time):
+                return None
             trade.close_date = current_time
             exit_reason = exit_.exit_reason
             amount_ = amount if amount is not None else trade.amount
@@ -938,10 +947,17 @@ class Backtesting:
         exit_reason: str | None,
     ) -> LocalTrade | None:
         self.order_id_counter += 1
-        exit_candle_time = sell_row[DATE_IDX].to_pydatetime()
+        exit_candle_time = self.exchange.candle_execution_time(
+            self.timeframe, sell_row[DATE_IDX].to_pydatetime()
+        )
         order_type = self.strategy.order_types["exit"]
-        close_rate = price_to_precision(
-            close_rate, trade.price_precision, trade.precision_mode_price
+        close_rate = (
+            self.exchange.price_to_precision(trade.pair, close_rate)
+            if self.exchange.get_option("price_band_precision")
+            else price_to_precision(close_rate, trade.price_precision, trade.precision_mode_price)
+        )
+        trade.fee_close = self.exchange.estimate_fee_rate(
+            trade.pair, trade.exit_side, amount, close_rate, exit_candle_time, trade.fee_close
         )
         # amount = amount or trade.amount
         amount = amount_to_contract_precision(
@@ -970,7 +986,14 @@ class Backtesting:
             amount=amount,
             filled=0,
             remaining=amount,
-            cost=amount * close_rate * (1 + self.fee),
+            cost=amount
+            * close_rate
+            * (
+                1
+                + self.exchange.estimate_fee_rate(
+                    trade.pair, trade.exit_side, amount, close_rate, exit_candle_time, self.fee
+                )
+            ),
             ft_order_tag=exit_reason,
         )
         order._trade_bt = trade
@@ -980,6 +1003,12 @@ class Backtesting:
     def _check_trade_exit(
         self, trade: LocalTrade, row: tuple, current_time: datetime
     ) -> LocalTrade | None:
+        current_time = self.exchange.candle_execution_time(self.timeframe, current_time)
+        if not self.exchange.can_place_order(trade.pair, current_time):
+            return None
+        trade.fee_close = self.exchange.estimate_fee_rate(
+            trade.pair, trade.exit_side, trade.amount, row[OPEN_IDX], current_time, trade.fee_close
+        )
         self._run_funding_fees(trade, current_time)
 
         # Check if we need to adjust our current positions
@@ -992,7 +1021,7 @@ class Backtesting:
             exits = self.strategy.should_exit(
                 trade,  # type: ignore
                 row[OPEN_IDX],
-                row[DATE_IDX].to_pydatetime(),
+                current_time,
                 enter=enter,
                 exit_=exit_sig,
                 low=row[LOW_IDX],
@@ -1056,6 +1085,8 @@ class Backtesting:
             else:
                 propose_rate = min(propose_rate, row[HIGH_IDX])
 
+        if self.exchange.get_option("price_band_precision"):
+            propose_rate = self.exchange.price_to_precision(pair, propose_rate)
         pos_adjust = trade is not None
         leverage = trade.leverage if trade else 1.0
         if not pos_adjust:
@@ -1136,7 +1167,11 @@ class Backtesting:
         :param requested_stake: Stake amount for adjusted orders (`adjust_entry_price`).
         """
 
-        current_time = row[DATE_IDX].to_pydatetime()
+        current_time = self.exchange.candle_execution_time(
+            self.timeframe, row[DATE_IDX].to_pydatetime()
+        )
+        if not self.exchange.can_place_order(pair, current_time):
+            return trade
         entry_tag = entry_tag1 or (row[ENTER_TAG_IDX] if len(row) >= ENTER_TAG_IDX + 1 else None)
         # let's call the custom entry price, using the open price as default price
         order_type = self.strategy.order_types["entry"]
@@ -1220,8 +1255,22 @@ class Backtesting:
                     stake_amount=stake_amount,
                     amount=0,
                     amount_requested=amount,
-                    fee_open=self.fee,
-                    fee_close=self.fee,
+                    fee_open=self.exchange.estimate_fee_rate(
+                        pair,
+                        "sell" if is_short else "buy",
+                        amount,
+                        propose_rate,
+                        current_time,
+                        self.fee,
+                    ),
+                    fee_close=self.exchange.estimate_fee_rate(
+                        pair,
+                        "buy" if is_short else "sell",
+                        amount,
+                        propose_rate,
+                        current_time,
+                        self.fee,
+                    ),
                     is_open=True,
                     enter_tag=entry_tag,
                     timeframe=self.timeframe_min,
@@ -1265,7 +1314,14 @@ class Backtesting:
                 amount=amount,
                 filled=0,
                 remaining=amount,
-                cost=amount * propose_rate * (1 + self.fee),
+                cost=amount
+                * propose_rate
+                * (
+                    1
+                    + self.exchange.estimate_fee_rate(
+                        pair, trade.entry_side, amount, propose_rate, current_time, self.fee
+                    )
+                ),
                 ft_order_tag=entry_tag,
             )
             order._trade_bt = trade
@@ -1383,7 +1439,9 @@ class Backtesting:
                 False if it's Canceled
                 None if the order is still active.
         """
-        timedout = self.strategy.ft_check_timed_out(
+        timedout = self.exchange.order_expired(
+            trade.pair, order.order_date_utc, current_time
+        ) or self.strategy.ft_check_timed_out(
             trade,  # type: ignore[arg-type]
             order,
             current_time,

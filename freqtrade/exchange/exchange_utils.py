@@ -34,6 +34,17 @@ from freqtrade.util import FtPrecise
 
 
 CcxtModuleType = Any
+LOCAL_EXCHANGES = ("kis",)
+
+
+def uses_continuous_candles(exchange_name: str) -> bool:
+    """Keep closed-session gaps for the explicitly registered KIS market."""
+    return exchange_name.lower() not in LOCAL_EXCHANGES
+
+
+def is_exchange_known(exchange_name: str) -> bool:
+    """Recognize CCXT exchanges and the explicitly registered local adapter."""
+    return exchange_name in LOCAL_EXCHANGES or is_exchange_known_ccxt(exchange_name)
 
 
 def is_exchange_known_ccxt(exchange_name: str, ccxt_module: CcxtModuleType | None = None) -> bool:
@@ -51,7 +62,7 @@ def available_exchanges(ccxt_module: CcxtModuleType | None = None) -> list[str]:
     """
     Return exchanges available to the bot, i.e. non-bad exchanges in the ccxt list
     """
-    exchanges = ccxt_exchanges(ccxt_module)
+    exchanges = ccxt_exchanges(ccxt_module) + list(LOCAL_EXCHANGES)
     return [x for x in exchanges if validate_exchange(x)[0]]
 
 
@@ -75,6 +86,14 @@ def validate_exchange(exchange: str) -> tuple[bool, str, str, ccxt.Exchange | No
     returns: can_use, reason, exchange_object
         with Reason including both missing and missing_opt
     """
+    if exchange.lower() in LOCAL_EXCHANGES:
+        from freqtrade.exchange.kis_adapter import KisSync
+
+        ex_mod = ccxt.async_support.Exchange()
+        metadata = KisSync.describe(ex_mod)
+        ex_mod.id, ex_mod.name = exchange.lower(), metadata["name"]
+        ex_mod.has, ex_mod.timeframes = metadata["has"], metadata["timeframes"]
+        return True, "Local experimental adapter; dry-run only", "No futures support", ex_mod
     try:
         ex_mod = getattr(ccxt.pro, exchange.lower())()
     except AttributeError:
@@ -147,7 +166,7 @@ def list_available_exchanges(all_exchanges: bool) -> list[ValidExchangesType]:
     """
     :return: List of tuples with exchangename, valid, reason.
     """
-    exchanges = ccxt_exchanges() if all_exchanges else available_exchanges()
+    exchanges = ccxt_exchanges() + list(LOCAL_EXCHANGES) if all_exchanges else available_exchanges()
     from freqtrade.resolvers.exchange_resolver import ExchangeResolver
 
     subclassed = {e["name"].lower(): e for e in ExchangeResolver.search_all_objects({}, False)}

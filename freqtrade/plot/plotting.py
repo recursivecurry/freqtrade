@@ -24,6 +24,7 @@ from freqtrade.data.metrics import (
 from freqtrade.enums import CandleType
 from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import timeframe_to_prev_date, timeframe_to_seconds
+from freqtrade.exchange.exchange_utils import uses_continuous_candles
 from freqtrade.misc import pair_to_filename
 from freqtrade.plugins.pairlist.pairlist_helpers import expand_pairlist
 from freqtrade.resolvers import ExchangeResolver, StrategyResolver
@@ -66,6 +67,8 @@ def init_plotscript(config, markets: list, startup_candles: int = 0):
         startup_candles=startup_candles,
         data_format=config["dataformat_ohlcv"],
         candle_type=config.get("candle_type_def", CandleType.SPOT),
+        fill_up_missing=uses_continuous_candles(config.get("exchange", {}).get("name", "")),
+        startup_by_count=not uses_continuous_candles(config.get("exchange", {}).get("name", "")),
     )
 
     if startup_candles and data:

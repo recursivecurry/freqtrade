@@ -1094,7 +1094,7 @@ class FreqtradeBot(LoggingMixin):
             pair, price, stake_amount, trade_side, enter_tag, trade, mode, leverage_
         )
 
-        if not stake_amount:
+        if not stake_amount or not self.exchange.can_place_order(pair, dt_now()):
             return False
 
         msg = (
@@ -1207,8 +1207,17 @@ class FreqtradeBot(LoggingMixin):
                 amount=0,
                 is_open=True,
                 amount_requested=amount_requested,
-                fee_open=fee,
-                fee_close=fee,
+                fee_open=self.exchange.estimate_fee_rate(
+                    pair, side, order.get("amount", amount), enter_limit_filled_price, dt_now(), fee
+                ),
+                fee_close=self.exchange.estimate_fee_rate(
+                    pair,
+                    "buy" if is_short else "sell",
+                    order.get("amount", amount),
+                    enter_limit_filled_price,
+                    dt_now(),
+                    fee,
+                ),
                 open_rate=enter_limit_filled_price,
                 open_rate_requested=enter_limit_requested,
                 open_date=datetime.now(UTC),
@@ -1570,6 +1579,11 @@ class FreqtradeBot(LoggingMixin):
         """
         Check and execute trade exit
         """
+        if not self.exchange.can_place_order(trade.pair, dt_now()):
+            return False
+        trade.fee_close = self.exchange.estimate_fee_rate(
+            trade.pair, trade.exit_side, trade.amount, exit_rate, dt_now(), trade.fee_close
+        )
         exits: list[ExitCheckTuple] = self.strategy.should_exit(
             trade,
             exit_rate,
@@ -2268,6 +2282,8 @@ class FreqtradeBot(LoggingMixin):
         :param exit_check: CheckTuple with signal and reason
         :return: True if it succeeds False
         """
+        if not self.exchange.can_place_order(trade.pair, dt_now()):
+            return False
         trade.set_funding_fees(
             self.exchange.get_funding_fees(
                 pair=trade.pair,
@@ -2315,6 +2331,9 @@ class FreqtradeBot(LoggingMixin):
         trade = self.cancel_stoploss_on_exchange(trade, allow_nonblocking=True)
 
         amount = self._safe_exit_amount(trade, trade.pair, sub_trade_amt or trade.amount)
+        trade.fee_close = self.exchange.estimate_fee_rate(
+            trade.pair, trade.exit_side, amount, limit, dt_now(), trade.fee_close
+        )
         time_in_force = self.strategy.order_time_in_force["exit"]
 
         if (

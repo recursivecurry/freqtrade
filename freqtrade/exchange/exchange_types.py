@@ -31,6 +31,9 @@ class FtHas(TypedDict, total=False):
     ohlcv_candle_limit: int
     ohlcv_has_history: bool
     ohlcv_partial_candle: bool
+    ohlcv_fill_missing: bool
+    ohlcv_align_timestamps: bool
+    price_band_precision: bool
     ohlcv_require_since: bool
     # Seconds after the candle close time to assume a candle is actually closed
     ohlcv_late_candle_grace_secs: int
