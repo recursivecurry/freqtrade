@@ -103,6 +103,25 @@ class DataProvider:
             max_age_minutes,
         )
 
+    def kis_model_flow(self, dataframe: DataFrame, pair: str, timeframe=None, max_age_minutes=5):
+        if self._config.get("exchange", {}).get("name") != "kis" or not self._exchange:
+            raise OperationalException("KIS model data requires the KIS exchange clock")
+        from freqtrade.exchange.kis_adapter.model_flow import enrich_model_flow
+
+        path = (
+            self._config["exchange"]
+            .get("kis", {})
+            .get("flow_database", Path(self._config["user_data_dir"]) / "kis-flow.sqlite")
+        )
+        return enrich_model_flow(
+            dataframe,
+            pair,
+            timeframe or self._default_timeframe,
+            path,
+            self.candle_publication_time,
+            max_age_minutes,
+        )
+
     def _set_dataframe_max_index(self, pair: str, limit_index: int):
         """
         Limit analyzed dataframe to max specified index.

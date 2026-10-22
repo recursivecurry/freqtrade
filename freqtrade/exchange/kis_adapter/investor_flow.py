@@ -306,6 +306,9 @@ def enrich_investor_flow(dataframe, pair, timeframe, path, publication_time, max
                     values = dict.fromkeys(PARTICIPANTS)
                 selected.append((record, reason, values))
             prefix = "kis_" + kind + "_"
+            columns[prefix + "label"] = (
+                "공식 제공 가집계 · 잠정치" if kind == "estimate" else "공식 일별 수급 · 정정 가능"
+            )
             for who in PARTICIPANTS:
                 columns[prefix + who + "_krw"] = pd.array(
                     [values[who] for _, _, values in selected], dtype="Int64"
