@@ -169,6 +169,9 @@ def validate_model(model):
             raise ValueError
         members = model["members"]
         dimensions = len(members) + 1
+        scalars = [*model["scale"], *(v for row in model["coefficients"] for v in row)]
+        if any(type(value) not in (int, float) for value in scalars):
+            raise ValueError
         scale, coefficients = (
             np.asarray(model["scale"], dtype=float),
             np.asarray(model["coefficients"], dtype=float),
@@ -243,7 +246,7 @@ def predict_model(model, snapshot, now):
         + [quantity(snapshot["program"])],
         dtype=float,
     )
-    prediction = (x / model["scale"]) @ np.array(model["coefficients"])
+    prediction = (x / model["scale"]) @ np.array(model["coefficients"], dtype=float)
     if not np.isfinite(prediction).all() or (np.abs(prediction) > 2**53 - 1).any():
         raise ValueError("KIS model prediction outside numeric precision")
     return dict(zip(TARGETS, map(float, prediction), strict=True))

@@ -186,3 +186,19 @@ def test_metrics_handle_constant_targets_without_nan():
     result = metrics([0, 0], [0, 0], [0, 0])
     assert result["r2"] is None and result["mae"] == 0
     assert np.isfinite(result["direction_agreement"])
+
+
+@pytest.mark.parametrize(
+    "field,value", [("scale", "1"), ("scale", True), ("coefficients", "1"), ("coefficients", False)]
+)
+def test_json_numeric_strings_and_booleans_are_rejected(model, field, value, tmp_path):
+    altered = copy.deepcopy(model)
+    if field == "scale":
+        altered[field][0] = value
+    else:
+        altered[field][0][0] = value
+    altered["model_id"] = fingerprint({k: v for k, v in altered.items() if k != "model_id"})
+    path = tmp_path / "invalid.json"
+    path.write_text(json.dumps(altered))
+    with pytest.raises(ValueError, match="artifact"):
+        load_model(path)
