@@ -46,6 +46,7 @@ def ohlcv_to_dataframe(
     fill_missing: bool = True,
     drop_incomplete: bool = True,
     candle_type: CandleType = CandleType.SPOT,
+    align_timestamps: bool = True,
 ) -> DataFrame:
     """
     Converts a list with candle (OHLCV) data (in format returned by ccxt.fetch_ohlcv)
@@ -57,6 +58,7 @@ def ohlcv_to_dataframe(
                          (see ohlcv_fill_up_missing_data for details)
     :param drop_incomplete: Drop the last candle of the dataframe, assuming it's incomplete
     :param candle_type: Candle type to use (spot, futures, funding_rate, ...)
+    :param align_timestamps: Floor timestamps to UTC timeframe boundaries
     :return: DataFrame
     """
     logger.debug(f"Converting candle (OHLCV) data to dataframe for pair {pair}.")
@@ -67,7 +69,8 @@ def ohlcv_to_dataframe(
 
     resample_interval = timeframe_to_floor_freq(timeframe)
 
-    df["date"] = to_datetime(df["date"], unit="ms", utc=True).dt.floor(resample_interval)
+    dates = to_datetime(df["date"], unit="ms", utc=True)
+    df["date"] = dates.dt.floor(resample_interval) if align_timestamps else dates
 
     # Some exchanges return int values for Volume and even for OHLC.
     # Convert them since TA-LIB indicators used in the strategy assume floats

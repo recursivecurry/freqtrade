@@ -21,8 +21,9 @@ There are three independent execution modes. Dry-run uses KIS quotes but must ne
 send order-changing requests. Paper trading sends orders only to the KIS simulation
 server. Live trading requires an explicit environment selection and a separate
 operational validation. The default example must use dry-run and paper mode.
-The existing ETF collector uses the production quote server: its credentials may be
-used for authorized read-only checks, not assumed to be paper credentials.
+The existing ETF collector uses the production quote server. Its three configured
+profiles also authenticated and returned quotes on the paper server on 2026-10-22.
+This does not establish account binding or order permissions.
 
 ## API mapping
 
@@ -117,8 +118,8 @@ cached by board/KST date. No sample code that disables TLS verification is reuse
 Limit-price rounding uses the current
 [KRX stock and ETF tick table](https://regulation.krx.co.kr/contents/RGL/03/03010100/RGL03010100T3.jsp).
 Stocks use price bands; ETFs use one KRW below 2,000 and five KRW at or above it.
-Whole-share precision uses CCXT's existing helpers. Freqtrade's own precision paths
-still need the phase-4 integration; client helpers alone do not establish engine support.
+Whole-share precision uses CCXT's existing helpers. The Freqtrade integration also
+applies price-band rounding in runtime and backtest order creation.
 
 `fetch_ticker` combines session statistics with a separate order-book request.
 Each observation has its own receive time in `info`; neither is presented as an
@@ -167,7 +168,8 @@ Past verified minute days have a bounded in-memory cache; returned bars are copi
 
 Production uses the dated intraday endpoint. Paper mode uses the documented
 today-only endpoint and rejects past-day intraday requests; no paper historical
-TR ID is guessed. Actual paper-server availability remains for phase 6. These
+TR ID is guessed. Paper authentication and current-day candles were exercised in
+the phase-4 dry-run; private account/order availability remains for phase 6. These
 public-data capabilities do not enable balance, orders or synthetic fills.
 
 ### Balances and orders
@@ -357,7 +359,8 @@ ASCII digits), optional `uid` (two-digit account product), and
 `options.environment` (`paper` by default, or explicit `live`). Quote-only clients
 can omit both account fields. Creating two facades with the same `KisClient`
 shares authentication and pacing; mismatched credentials or environments fail.
-Freqtrade configuration/loading is a later phase and is not enabled yet.
+`Kis` now loads these clients through the normal exchange resolver. `exchange.kis`
+passes the environment and sessions; standard exchange secret fields supply keys.
 
 The transport uses Python's HTTPS implementation with certificate validation,
 fixed broker hosts, no redirects and no environment proxy inheritance. It accepts
@@ -420,6 +423,59 @@ be described as observed KIS order responses.
 Unverified endpoint/TR-ID entries in the mapping table are implementation gates,
 not placeholders to fill by guessing. Phase 1 records them; the corresponding
 phase cannot be declared complete until its mapping and availability are resolved.
-No paper credentials have been identified yet. Production quote access does not
-authorize or prove paper/live order functionality. Real-account trading verification
-remains separate from the seven-phase delivery.
+Paper quote access has been verified; account reads and order permissions have not.
+Real-account trading verification remains separate from the seven-phase delivery.
+
+## Freqtrade dry-run integration
+
+The exchange name is `kis`. Exchange listing identifies it as a local experimental
+adapter. Broker order capabilities remain disabled, and `dry_run=false` is rejected
+in trading mode. `exchange.kis.environment` independently selects `paper` or `live`
+quotes; it does not turn a dry-run order into a broker order.
+
+Set `order_time_in_force` to `{"entry": "DAY", "exit": "DAY"}` in the configuration,
+because exchange validation runs before strategy loading. Only a static list of
+active master securities is allowed. FreqAI, order-flow data, CCXT overrides and
+raw broker-response logging are rejected. Both facades retain the same quote keys
+and transport; the bot's original configuration still has its secret fields removed.
+
+The session mapping lives in `exchange.kis.sessions`. Trading dates also need an
+aware `verified_at` timestamp no more than 24 hours old. The operator must verify
+the actual hours, including exceptional schedules, and restart/reload with current
+settings. There is no automatic exchange-announcement feed. Missing, closed,
+future-dated or stale schedules block new virtual orders. Existing DAY orders can
+still expire after their original close; expiry is local dry-run behavior, not a
+claim about a broker cancellation. ROI and timeout clocks remain elapsed wall time.
+
+KIS candles retain session gaps and midnight-KST daily labels in live caches,
+downloads, offline loads, plots and backtests. Warm-up loads count real preceding
+bars rather than elapsed minutes. Imported backtest datasets must match the verified
+session labels across their covered interval; an intraday gap stops the run. Daily
+backtests execute at the verified opening. Runtime daily signals publish at the next
+verified opening, avoiding consumption of the new daily signal before trading starts.
+Daily signal freshness and optional entry-signal expiry use that publication time,
+so a verified weekend or holiday does not make the previous session's bar stale.
+An omitted intervening calendar date or missing business-day candle still blocks it.
+Backtest fills, trade closure, callbacks and protections share the execution clock;
+intraday detail timestamps keep their actual time.
+An intraday paper strategy cannot obtain warm-up bars from a previous paper date.
+
+`exchange.kis.costs` maps each symbol to dated rules with `from`, `through`, `source`,
+`tax_treatment`, `buy_commission`, `sell_commission` and `sell_tax`. Rates are decimal
+fractions. Exactly one rule must cover the trade date. Supported treatments are
+`stock_transaction_tax` and `domestic_equity_etf` (zero transaction tax). NAV/profit
+withholding is unsupported. The model conservatively rounds commission and tax
+separately upward to whole KRW and retains their estimated status. It is not a claim
+about the account's actual billing-rounding convention. Supply verified product,
+date and account rates before interpreting results as account-cost validation.
+Symmetric global `fee` configuration is rejected. Exit estimates refresh at the
+current execution date, including a changed tax rule after an overnight hold.
+
+The real paper-quote run in `tests/testdata/kis/dryrun_verification.json` used an
+explicit validation-only strategy and synthetic, labelled cost rules. It verifies
+the signal → virtual fill → DB → FreqUI integration, not profitability or actual
+account charges. Two virtual shares bought at 224,000 KRW and sold at 223,000 KRW
+produced estimated costs of 448 and 1,338 KRW and a net loss of 3,786 KRW. The DB,
+authenticated API and captured FreqUI display agreed. The broker audit contained
+only token issuance and quote reads: zero order/cancel requests. The independent
+existing Kraken dry-run service was not replaced by this validation process.

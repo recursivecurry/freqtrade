@@ -411,6 +411,7 @@ class IDataHandler(ABC):
         fill_missing: bool = True,
         drop_incomplete: bool = False,
         startup_candles: int = 0,
+        startup_by_count: bool = False,
         warn_no_data: bool = True,
     ) -> DataFrame:
         """
@@ -422,13 +423,17 @@ class IDataHandler(ABC):
         :param fill_missing: Fill missing values with "No action"-candles
         :param drop_incomplete: Drop last candle assuming it may be incomplete.
         :param startup_candles: Additional candles to load at the start of the period
+        :param startup_by_count: Select actual preceding bars across closed sessions
         :param warn_no_data: Log a warning message when no data is found
         :param candle_type: Candle type to use (spot, futures, funding_rate, ...)
         :return: DataFrame with ohlcv data, or empty DataFrame
         """
         # Fix startup period
         timerange_startup = timerange.copy() if timerange else None
-        if startup_candles > 0 and timerange_startup:
+        if startup_by_count and timerange_startup and timerange_startup.starttype == "date":
+            timerange_startup.starttype = None
+            timerange_startup.startts = 0
+        elif startup_candles > 0 and timerange_startup:
             timerange_startup.subtract_start(timeframe_to_seconds(timeframe) * startup_candles)
 
         pairdf = self._ohlcv_load(
@@ -443,6 +448,12 @@ class IDataHandler(ABC):
         if self._check_empty_df(pairdf, pair, timeframe, candle_type, warn_no_data):
             return pairdf
         else:
+            if startup_by_count and timerange and timerange.starttype == "date":
+                pairdf = pairdf.sort_values("date").reset_index(drop=True)
+                first = pairdf["date"].searchsorted(timerange.startdt)
+                pairdf = pairdf.iloc[max(0, int(first) - startup_candles) :]
+                if self._check_empty_df(pairdf, pair, timeframe, candle_type, warn_no_data):
+                    return pairdf
             enddate = pairdf.iloc[-1]["date"]
 
             if timerange_startup:

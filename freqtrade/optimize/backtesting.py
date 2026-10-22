@@ -367,11 +367,15 @@ class Backtesting:
             timeframe=self.timeframe,
             timerange=self.timerange,
             startup_candles=self.required_startup,
+            fill_up_missing=self.exchange.get_option("ohlcv_fill_missing"),
+            startup_by_count=not self.exchange.get_option("ohlcv_fill_missing"),
             fail_without_data=True,
             data_format=self.config["dataformat_ohlcv"],
             candle_type=self.config.get("candle_type_def", CandleType.SPOT),
         )
 
+        for pair, dataframe in data.items():
+            self.exchange.validate_candle_data(pair, self.timeframe, dataframe)
         min_date, max_date = history.get_timerange(data)
 
         logger.info(
@@ -407,10 +411,14 @@ class Backtesting:
                 timeframe=self.timeframe_detail,
                 timerange=self.timerange,
                 startup_candles=0,
+                fill_up_missing=self.exchange.get_option("ohlcv_fill_missing"),
+                startup_by_count=not self.exchange.get_option("ohlcv_fill_missing"),
                 fail_without_data=True,
                 data_format=self.config["dataformat_ohlcv"],
                 candle_type=self.config.get("candle_type_def", CandleType.SPOT),
             )
+            for pair, dataframe in self.detail_data.items():
+                self.exchange.validate_candle_data(pair, self.timeframe_detail, dataframe)
         else:
             self.detail_data = {}
         if self.trading_mode == TradingMode.FUTURES:
@@ -806,6 +814,7 @@ class Backtesting:
         Check if an order is open and if it should've filled.
         :return: True if the order filled.
         """
+        current_date = self.exchange.candle_execution_time(self.timeframe, current_date)
         if order and self._get_order_filled(order.ft_price, row):
             order.close_bt_order(current_date, trade)
             self._run_funding_fees(trade, current_date, force=True)
@@ -839,6 +848,7 @@ class Backtesting:
         """
         Takes an exit order and processes it, potentially closing the trade.
         """
+        current_time = self.exchange.candle_execution_time(self.timeframe, current_time)
         if self._try_close_open_order(order, trade, current_time, row):
             sub_trade = order.safe_amount_after_fee != trade.amount
             if sub_trade:
@@ -860,6 +870,9 @@ class Backtesting:
         amount: float | None = None,
     ) -> LocalTrade | None:
         if exit_.exit_flag:
+            current_time = self.exchange.candle_execution_time(self.timeframe, current_time)
+            if not self.exchange.can_place_order(trade.pair, current_time):
+                return None
             trade.close_date = current_time
             exit_reason = exit_.exit_reason
             amount_ = amount if amount is not None else trade.amount
@@ -938,10 +951,17 @@ class Backtesting:
         exit_reason: str | None,
     ) -> LocalTrade | None:
         self.order_id_counter += 1
-        exit_candle_time = sell_row[DATE_IDX].to_pydatetime()
+        exit_candle_time = self.exchange.candle_execution_time(
+            self.timeframe, sell_row[DATE_IDX].to_pydatetime()
+        )
         order_type = self.strategy.order_types["exit"]
-        close_rate = price_to_precision(
-            close_rate, trade.price_precision, trade.precision_mode_price
+        close_rate = (
+            self.exchange.price_to_precision(trade.pair, close_rate)
+            if self.exchange.get_option("price_band_precision")
+            else price_to_precision(close_rate, trade.price_precision, trade.precision_mode_price)
+        )
+        trade.fee_close = self.exchange.estimate_fee_rate(
+            trade.pair, trade.exit_side, amount, close_rate, exit_candle_time, trade.fee_close
         )
         # amount = amount or trade.amount
         amount = amount_to_contract_precision(
@@ -970,7 +990,14 @@ class Backtesting:
             amount=amount,
             filled=0,
             remaining=amount,
-            cost=amount * close_rate * (1 + self.fee),
+            cost=amount
+            * close_rate
+            * (
+                1
+                + self.exchange.estimate_fee_rate(
+                    trade.pair, trade.exit_side, amount, close_rate, exit_candle_time, self.fee
+                )
+            ),
             ft_order_tag=exit_reason,
         )
         order._trade_bt = trade
@@ -980,6 +1007,12 @@ class Backtesting:
     def _check_trade_exit(
         self, trade: LocalTrade, row: tuple, current_time: datetime
     ) -> LocalTrade | None:
+        current_time = self.exchange.candle_execution_time(self.timeframe, current_time)
+        if not self.exchange.can_place_order(trade.pair, current_time):
+            return None
+        trade.fee_close = self.exchange.estimate_fee_rate(
+            trade.pair, trade.exit_side, trade.amount, row[OPEN_IDX], current_time, trade.fee_close
+        )
         self._run_funding_fees(trade, current_time)
 
         # Check if we need to adjust our current positions
@@ -992,7 +1025,7 @@ class Backtesting:
             exits = self.strategy.should_exit(
                 trade,  # type: ignore
                 row[OPEN_IDX],
-                row[DATE_IDX].to_pydatetime(),
+                current_time,
                 enter=enter,
                 exit_=exit_sig,
                 low=row[LOW_IDX],
@@ -1056,6 +1089,8 @@ class Backtesting:
             else:
                 propose_rate = min(propose_rate, row[HIGH_IDX])
 
+        if self.exchange.get_option("price_band_precision"):
+            propose_rate = self.exchange.price_to_precision(pair, propose_rate)
         pos_adjust = trade is not None
         leverage = trade.leverage if trade else 1.0
         if not pos_adjust:
@@ -1136,7 +1171,11 @@ class Backtesting:
         :param requested_stake: Stake amount for adjusted orders (`adjust_entry_price`).
         """
 
-        current_time = row[DATE_IDX].to_pydatetime()
+        current_time = self.exchange.candle_execution_time(
+            self.timeframe, row[DATE_IDX].to_pydatetime()
+        )
+        if not self.exchange.can_place_order(pair, current_time):
+            return trade
         entry_tag = entry_tag1 or (row[ENTER_TAG_IDX] if len(row) >= ENTER_TAG_IDX + 1 else None)
         # let's call the custom entry price, using the open price as default price
         order_type = self.strategy.order_types["entry"]
@@ -1220,8 +1259,22 @@ class Backtesting:
                     stake_amount=stake_amount,
                     amount=0,
                     amount_requested=amount,
-                    fee_open=self.fee,
-                    fee_close=self.fee,
+                    fee_open=self.exchange.estimate_fee_rate(
+                        pair,
+                        "sell" if is_short else "buy",
+                        amount,
+                        propose_rate,
+                        current_time,
+                        self.fee,
+                    ),
+                    fee_close=self.exchange.estimate_fee_rate(
+                        pair,
+                        "buy" if is_short else "sell",
+                        amount,
+                        propose_rate,
+                        current_time,
+                        self.fee,
+                    ),
                     is_open=True,
                     enter_tag=entry_tag,
                     timeframe=self.timeframe_min,
@@ -1265,7 +1318,14 @@ class Backtesting:
                 amount=amount,
                 filled=0,
                 remaining=amount,
-                cost=amount * propose_rate * (1 + self.fee),
+                cost=amount
+                * propose_rate
+                * (
+                    1
+                    + self.exchange.estimate_fee_rate(
+                        pair, trade.entry_side, amount, propose_rate, current_time, self.fee
+                    )
+                ),
                 ft_order_tag=entry_tag,
             )
             order._trade_bt = trade
@@ -1383,7 +1443,9 @@ class Backtesting:
                 False if it's Canceled
                 None if the order is still active.
         """
-        timedout = self.strategy.ft_check_timed_out(
+        timedout = self.exchange.order_expired(
+            trade.pair, order.order_date_utc, current_time
+        ) or self.strategy.ft_check_timed_out(
             trade,  # type: ignore[arg-type]
             order,
             current_time,
@@ -1529,6 +1591,7 @@ class Backtesting:
 
         Backtesting processing for one candle/pair.
         """
+        current_time = self.exchange.candle_execution_time(self.timeframe, current_time)
         exiting_dir: LongShort | None = None
         if not self._position_stacking and len(LocalTrade.bt_trades_open_pp[pair]) > 0:
             # position_stacking not supported for now.
@@ -1550,7 +1613,7 @@ class Backtesting:
             can_enter
             and trade_dir is not None
             and (self._position_stacking or len(LocalTrade.bt_trades_open_pp[pair]) == 0)
-            and not PairLocks.is_pair_locked(pair, row[DATE_IDX], trade_dir)
+            and not PairLocks.is_pair_locked(pair, current_time, trade_dir)
         ):
             if self.trade_slot_available(LocalTrade.bt_open_open_trade_count):
                 trade = self._enter_trade(pair, row, trade_dir)
@@ -1667,7 +1730,7 @@ class Backtesting:
             # Critical to avoid exceeding max_open_trades in backtesting
             # when timeframe-detail is used and trades close within the opening candle.
             strategy_safe_wrapper(self.strategy.bot_loop_start, supress_error=True)(
-                current_time=current_time
+                current_time=self.exchange.candle_execution_time(self.timeframe, current_time)
             )
             pair_detail_cache: dict[str, list[tuple]] = {}
             pair_tradedir_cache: dict[str, LongShort | None] = {}
@@ -1708,17 +1771,6 @@ class Backtesting:
                     row = detail_data[idx]
                     trade_dir = pair_tradedir_cache.get(pair)
 
-                    if self.strategy.ignore_expired_candle(
-                        current_time - self.timeframe_td,  # last closed candle is 1 timeframe away.
-                        current_time_det,
-                        self.timeframe_secs,
-                        trade_dir is not None,
-                    ):
-                        # Ignore late entries eventually
-                        trade_dir = None
-
-                self.dataprovider._set_dataframe_max_date(current_time_det)
-
                 pair_has_open_trades = len(LocalTrade.bt_trades_open_pp[pair]) > 0
                 if pair in pairs_with_open_trades and not pair_has_open_trades:
                     # Pair has had open trades which closed in the current main candle.
@@ -1746,7 +1798,25 @@ class Backtesting:
                         pair_detail_cache[pair] = pair_detail
                         row = pair_detail_cache[pair][idx]
 
-                is_last_row = current_time_det == end_date
+                continuous = self.exchange.get_option("ohlcv_fill_missing")
+                current_time_det = (
+                    current_time_det
+                    if continuous
+                    else self.exchange.candle_execution_time(
+                        self.timeframe, row[DATE_IDX].to_pydatetime()
+                    )
+                )
+                is_last_row = (current_time_det if continuous else current_time) == end_date
+
+                if not is_first and self.strategy.ignore_expired_candle(
+                    self.exchange.candle_execution_time(self.timeframe, current_time)
+                    - self.timeframe_td,
+                    current_time_det,
+                    self.timeframe_secs,
+                    trade_dir is not None,
+                ):
+                    trade_dir = None
+                self.dataprovider._set_dataframe_max_date(current_time_det)
 
                 yield current_time_det, pair, row, is_last_row, trade_dir
             self._increment_progress()

@@ -1012,6 +1012,76 @@ CONF_SCHEMA = {
                     ),
                     "type": ["string", "null"],
                 },
+                "kis": {
+                    "description": (
+                        "Local KIS adapter settings; credentials use the standard exchange fields."
+                    ),
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["environment", "sessions"],
+                    "properties": {
+                        "environment": {"type": "string", "enum": ["paper", "live"]},
+                        "sessions": {
+                            "type": "object",
+                            "propertyNames": {"pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                            "additionalProperties": {
+                                "type": ["object", "null"],
+                                "required": ["open", "auction", "close", "source"],
+                                "properties": {
+                                    "open": {"type": "string", "pattern": "^[0-9]{2}:[0-9]{2}$"},
+                                    "auction": {"type": "string", "pattern": "^[0-9]{2}:[0-9]{2}$"},
+                                    "close": {"type": "string", "pattern": "^[0-9]{2}:[0-9]{2}$"},
+                                    "source": {"type": "string", "minLength": 1},
+                                    "verified_at": {"type": "string", "format": "date-time"},
+                                },
+                                "additionalProperties": False,
+                            },
+                        },
+                        "costs": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "object",
+                                    "required": [
+                                        "from",
+                                        "through",
+                                        "source",
+                                        "tax_treatment",
+                                        "buy_commission",
+                                        "sell_commission",
+                                        "sell_tax",
+                                    ],
+                                    "properties": {
+                                        "from": {"type": "string", "format": "date"},
+                                        "through": {"type": "string", "format": "date"},
+                                        "source": {"type": "string", "minLength": 1},
+                                        "tax_treatment": {
+                                            "enum": ["stock_transaction_tax", "domestic_equity_etf"]
+                                        },
+                                        "buy_commission": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 0.1,
+                                        },
+                                        "sell_commission": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 0.1,
+                                        },
+                                        "sell_tax": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 0.1,
+                                        },
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            },
+                        },
+                    },
+                },
                 "pair_whitelist": {
                     "description": "List of whitelisted trading pairs.",
                     "type": "array",

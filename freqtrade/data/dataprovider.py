@@ -7,7 +7,7 @@ Common Interface for bot and strategy to access data.
 
 import logging
 from collections import deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pandas import DataFrame, Timedelta, Timestamp, to_timedelta
@@ -24,6 +24,7 @@ from freqtrade.enums import CandleType, RPCMessageType, RunMode, TradingMode
 from freqtrade.exceptions import ExchangeError, OperationalException
 from freqtrade.exchange import Exchange, timeframe_to_prev_date, timeframe_to_seconds
 from freqtrade.exchange.exchange_types import FundingRate, OrderBook
+from freqtrade.exchange.exchange_utils import uses_continuous_candles
 from freqtrade.misc import append_candles_to_dataframe
 from freqtrade.rpc import RPCManager
 from freqtrade.rpc.rpc_types import RPCAnalyzedDFMsg
@@ -68,6 +69,12 @@ class DataProvider:
 
         self.producers = self._config.get("external_message_consumer", {}).get("producers", [])
         self.external_data_enabled = len(self.producers) > 0
+
+    def candle_close_time(self, timeframe: str, when: datetime, now: datetime) -> datetime | None:
+        """Use the exchange's signal clock when session calendars affect publication."""
+        if self._exchange:
+            return self._exchange.candle_close_time(timeframe, when, now)
+        return when + timedelta(seconds=timeframe_to_seconds(timeframe))
 
     def _set_dataframe_max_index(self, pair: str, limit_index: int):
         """
@@ -318,7 +325,9 @@ class DataProvider:
 
             startup_candles = self.get_required_startup(str(timeframe))
             tf_seconds = timeframe_to_seconds(str(timeframe))
-            timerange.subtract_start(tf_seconds * startup_candles)
+            continuous = uses_continuous_candles(self._config.get("exchange", {}).get("name", ""))
+            if continuous:
+                timerange.subtract_start(tf_seconds * startup_candles)
 
             logger.info(
                 f"Loading data for {pair} {timeframe} "
@@ -332,7 +341,14 @@ class DataProvider:
                 timerange=timerange,
                 data_format=self._config["dataformat_ohlcv"],
                 candle_type=_candle_type,
+                fill_up_missing=continuous,
+                startup_by_count=not continuous,
+                startup_candles=0 if continuous else startup_candles,
             )
+            if self._exchange:
+                self._exchange.validate_candle_data(
+                    pair, timeframe, self.__cached_pairs_backtesting[saved_pair]
+                )
         return self.__cached_pairs_backtesting[saved_pair].copy()
 
     def get_required_startup(self, timeframe: str) -> int:

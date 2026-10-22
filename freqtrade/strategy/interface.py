@@ -1309,7 +1309,13 @@ class IStrategy(ABC, HyperStrategyMixin):
         # Check if dataframe is out of date
         timeframe_minutes = timeframe_to_minutes(timeframe)
         offset = self.config.get("exchange", {}).get("outdated_offset", 5)
-        if latest_date < (dt_now() - timedelta(minutes=timeframe_minutes * 2 + offset)):
+        now = dt_now()
+        close_time = (
+            self.dp.candle_close_time(timeframe, latest_date, now)
+            if getattr(self, "dp", None)
+            else latest_date + timedelta(minutes=timeframe_minutes)
+        )
+        if close_time is None or close_time < (now - timedelta(minutes=timeframe_minutes + offset)):
             logger.warning(
                 "Outdated history for pair %s. Last tick is %s minutes old",
                 pair,
@@ -1393,6 +1399,11 @@ class IStrategy(ABC, HyperStrategyMixin):
 
         timeframe_seconds = timeframe_to_seconds(timeframe)
 
+        if self.ignore_buying_expired_candle_after and getattr(self, "dp", None):
+            close_time = self.dp.candle_close_time(timeframe, latest_date, dt_now())
+            if close_time is None:
+                return None, enter_tag
+            latest_date = close_time - timedelta(seconds=timeframe_seconds)
         if self.ignore_expired_candle(
             latest_date=latest_date,
             current_time=dt_now(),

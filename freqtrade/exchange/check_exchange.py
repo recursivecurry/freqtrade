@@ -3,8 +3,9 @@ import logging
 from freqtrade.constants import Config
 from freqtrade.enums import RunMode
 from freqtrade.exceptions import OperationalException
-from freqtrade.exchange import available_exchanges, is_exchange_known_ccxt, validate_exchange
+from freqtrade.exchange import available_exchanges, validate_exchange
 from freqtrade.exchange.common import MAP_EXCHANGE_CHILDCLASS, SUPPORTED_EXCHANGES
+from freqtrade.exchange.exchange_utils import LOCAL_EXCHANGES, is_exchange_known
 
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ def check_exchange(config: Config, check_for_bad: bool = True) -> bool:
             f"{', '.join(available_exchanges())}"
         )
 
-    if not is_exchange_known_ccxt(exchange):
+    if not is_exchange_known(exchange):
         raise OperationalException(
             f'Exchange "{exchange}" is not known to the ccxt library '
             f"and therefore not available for the bot.\n"
@@ -56,7 +57,9 @@ def check_exchange(config: Config, check_for_bad: bool = True) -> bool:
         else:
             logger.warning(f'Exchange "{exchange}" will not work with Freqtrade. Reason: {reason}.')
 
-    if MAP_EXCHANGE_CHILDCLASS.get(exchange, exchange) in SUPPORTED_EXCHANGES:
+    if exchange in LOCAL_EXCHANGES:
+        logger.warning(f'Exchange "{exchange}" is an experimental local adapter; dry-run only.')
+    elif MAP_EXCHANGE_CHILDCLASS.get(exchange, exchange) in SUPPORTED_EXCHANGES:
         logger.info(
             f'Exchange "{exchange}" is officially supported by the Freqtrade development team.'
         )

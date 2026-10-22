@@ -51,6 +51,7 @@ def load_pair_history(
     fill_up_missing: bool = True,
     drop_incomplete: bool = False,
     startup_candles: int = 0,
+    startup_by_count: bool = False,
     data_format: str | None = None,
     data_handler: IDataHandler | None = None,
     candle_type: CandleType = CandleType.SPOT,
@@ -66,6 +67,7 @@ def load_pair_history(
     :param fill_up_missing: Fill missing values with "No action"-candles
     :param drop_incomplete: Drop last candle assuming it may be incomplete.
     :param startup_candles: Additional candles to load at the start of the period
+    :param startup_by_count: Select actual preceding bars across closed sessions
     :param data_handler: Initialized data-handler to use.
                          Will be initialized from data_format if not set
     :param candle_type: Candle type to use (spot, futures, funding_rate, ...)
@@ -80,6 +82,7 @@ def load_pair_history(
         fill_missing=fill_up_missing,
         drop_incomplete=drop_incomplete,
         startup_candles=startup_candles,
+        startup_by_count=startup_by_count,
         candle_type=candle_type,
     )
 
@@ -92,6 +95,7 @@ def load_data(
     timerange: TimeRange | None = None,
     fill_up_missing: bool = True,
     startup_candles: int = 0,
+    startup_by_count: bool = False,
     fail_without_data: bool = False,
     data_format: str = "feather",
     candle_type: CandleType = CandleType.SPOT,
@@ -106,6 +110,7 @@ def load_data(
     :param timerange: Limit data to be loaded to this timerange
     :param fill_up_missing: Fill missing values with "No action"-candles
     :param startup_candles: Additional candles to load at the start of the period
+    :param startup_by_count: Select actual preceding bars across closed sessions
     :param fail_without_data: Raise OperationalException if no data is found.
     :param data_format: Data format which should be used. Defaults to json
     :param candle_type: Candle type to use (spot, futures, funding_rate, ...)
@@ -125,6 +130,7 @@ def load_data(
             timerange=timerange,
             fill_up_missing=fill_up_missing,
             startup_candles=startup_candles,
+            startup_by_count=startup_by_count,
             data_handler=data_handler,
             candle_type=candle_type,
         )
