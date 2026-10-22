@@ -270,3 +270,19 @@ def test_informative_merges_wait_until_actual_period_publication(
         assert result["close_1M"].dropna().tolist() == [999, 999]
     finally:
         exchange.close()
+
+
+@pytest.mark.parametrize("missing", ["1h", "1M", "both"])
+@pytest.mark.parametrize("ffill", [False, True])
+def test_informative_merge_unknown_publication_times_remain_unavailable(missing, ffill):
+    stamp = pd.Timestamp("2026-10-02T09:00:00+09:00").tz_convert(UTC)
+    base = pd.DataFrame({"date": [stamp]})
+    informative = pd.DataFrame({"date": [stamp - pd.Timedelta(days=1)], "close": [999]})
+
+    def publication(timeframe, when):
+        return None if missing in (timeframe, "both") else when
+
+    result = merge_informative_pair(
+        base, informative, "1h", "1M", ffill=ffill, publication_time=publication
+    )
+    assert len(result) == 1 and result["close_1M"].isna().all()

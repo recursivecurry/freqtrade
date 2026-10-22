@@ -177,7 +177,7 @@ def merge_informative_pair(
     left["_ft_row"] = range(len(left))
     left["_ft_publication"] = pd.to_datetime(
         [publication_time(timeframe, value.to_pydatetime()) for value in left["date"]], utc=True
-    )
+    ).astype("datetime64[ns, UTC]")
     right = prepared.dataframe.copy()
     right[prepared.date_merge] = pd.to_datetime(
         [
@@ -185,7 +185,7 @@ def merge_informative_pair(
             for value in informative[date_column]
         ],
         utc=True,
-    )
+    ).astype("datetime64[ns, UTC]")
     right = right.dropna(subset=[prepared.date_merge]).sort_values(prepared.date_merge)
     valid = left.dropna(subset=["_ft_publication"]).sort_values("_ft_publication")
     if ffill:
